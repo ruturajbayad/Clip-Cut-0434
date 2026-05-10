@@ -179,11 +179,10 @@ function KeyframeRow({
 }
 
 export default function RightPanel() {
-  const { selectedClipId, project, updateClip, updateClipSpeed, addKeyframe, currentTime } = useEditorStore(useShallow((s) => ({
+  const { selectedClipId, project, updateClip, addKeyframe, currentTime } = useEditorStore(useShallow((s) => ({
     selectedClipId: s.selectedClipId,
     project: s.project,
     updateClip: s.updateClip,
-    updateClipSpeed: s.updateClipSpeed,
     addKeyframe: s.addKeyframe,
     currentTime: s.currentTime,
   })));
@@ -360,26 +359,7 @@ export default function RightPanel() {
         </Section>
       )}
 
-      {/* Speed & Reverse — video clips only */}
-      {selectedClip.type === 'video' && (
-        <Section title="Playback" icon={Sun}>
-          <SliderProp
-            label="Speed"
-            value={Math.round(((live.speed as number) ?? 1) * 100) / 100}
-            min={0.25} max={2} step={0.25} unit="x"
-            onChange={(v) => updateClipSpeed(selectedClip.id, v)}
-          />
-          <div className="flex items-center justify-between mt-1.5">
-            <span className="text-[11px] text-gray-600">Reverse</span>
-            <button
-              onClick={() => updateClip(selectedClip.id, { reverse: !(selectedClip.reverse ?? false) })}
-              className={`relative w-9 h-5 rounded-full transition-colors ${selectedClip.reverse ? 'bg-indigo-500' : 'bg-gray-200'}`}
-            >
-              <span className={`absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform ${selectedClip.reverse ? 'translate-x-4' : 'translate-x-0.5'}`} />
-            </button>
-          </div>
-        </Section>
-      )}
+
 
       {/* Adjustments — video and image clips */}
       {(selectedClip.type === 'video' || selectedClip.type === 'image') && (
