@@ -30,6 +30,7 @@ import { useMediaEngine } from '../player/useMediaEngine';
 import { VideoLayer } from '../player/VideoLayer';
 import { AudioLayer } from '../player/AudioLayer';
 import { OverlayLayer } from '../player/OverlayLayer';
+import { TransitionOverlay, TRANSITION_DURATION } from '../player/TransitionOverlay';
 
 const ASPECT_RATIOS = [
   { label: '16:9', w: 16, h: 9 },
@@ -111,7 +112,30 @@ export default function PreviewCanvas() {
     () => allClips.filter((c) => c.type === 'text' && currentTime >= c.startTime && currentTime < c.startTime + c.duration),
     [allClips, currentTime]
   );
+  // Image clips are fully managed in OverlayLayer (moveable/resizable)
+  const activeImageClips = useMemo(
+    () => allClips.filter((c) => c.type === 'image' && currentTime >= c.startTime && currentTime < c.startTime + c.duration),
+    [allClips, currentTime]
+  );
   const hasActiveVideo = activeVideoClips.length > 0;
+
+  // Compute active transition (straddles the cut point: 0.25s before and 0.25s after)
+  const activeTransition = useMemo(() => {
+    for (const clip of videoClips) {
+      if (clip.transition) {
+        const cutTime = clip.startTime + clip.duration;
+        const tStart = cutTime - TRANSITION_DURATION / 2;
+        const tEnd = cutTime + TRANSITION_DURATION / 2;
+        if (currentTime >= tStart && currentTime <= tEnd) {
+          return {
+            type: clip.transition,
+            progress: (currentTime - tStart) / TRANSITION_DURATION,
+          };
+        }
+      }
+    }
+    return null;
+  }, [videoClips, currentTime]);
 
   // ── MediaEngine element registration callbacks ───────────────────────────────
   // Stable callbacks — never recreated, so VideoLayer never re-renders unnecessarily
@@ -180,9 +204,9 @@ export default function PreviewCanvas() {
             <VideoLayer
               videoClips={videoClips}
               mediaLibrary={mediaLibrary}
-              currentTime={currentTime}
               onVideoRef={onVideoRef}
               onWrapperRef={onWrapperRef}
+              mainTrackId={mainVideoTrack?.id}
             />
 
             {/*
@@ -194,12 +218,14 @@ export default function PreviewCanvas() {
             <OverlayLayer
               activeVideoClips={activeVideoClips}
               activeTextClips={activeTextClips}
+              activeImageClips={activeImageClips}
               overlayVideoClips={overlayVideoClips}
               currentTime={currentTime}
               canvasW={canvasSize.w}
               canvasH={canvasSize.h}
               selectedClipId={selectedClipId}
               onSelect={setSelectedClip}
+              mediaLibrary={mediaLibrary}
             />
 
             {/*
@@ -232,6 +258,14 @@ export default function PreviewCanvas() {
                 <div className="absolute border border-white/30" style={{ inset: '5%' }} />
                 <div className="absolute border border-white/15" style={{ inset: '10%' }} />
               </div>
+            )}
+
+            {/* Timecode */}
+            {activeTransition && (
+              <TransitionOverlay
+                type={activeTransition.type}
+                progress={activeTransition.progress}
+              />
             )}
 
             {/* Timecode */}

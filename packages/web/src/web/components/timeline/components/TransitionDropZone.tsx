@@ -26,32 +26,23 @@ export const TransitionDropZone = memo(function TransitionDropZone({
       style={{ left: x - 10, width: 20, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
     >
       {hasTransition ? (
-        /* Transition block indicator */
-        <div
-          className="rounded-sm cursor-pointer hover:opacity-100 opacity-80 transition-opacity"
-          style={{
-            width: 14,
-            height: 20,
-            background: 'linear-gradient(135deg, #ec4899, #8b5cf6)',
-            border: '1px solid rgba(255,255,255,0.2)',
-            boxShadow: '0 0 8px rgba(236,72,153,0.5)',
-          }}
-          onClick={(e) => { e.stopPropagation(); onAdd(e, leftClip.id); }}
-          title={`Transition: ${leftClip.transition}`}
-        />
-      ) : (
-        /* "+" add button */
+        /* Modern Transition Badge */
         <button
           onClick={(e) => { e.stopPropagation(); onAdd(e, leftClip.id); }}
-          className="w-4 h-4 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-all hover:scale-110"
-          style={{
-            background: 'rgba(99,102,241,0.8)',
-            border: '1px solid rgba(255,255,255,0.3)',
-            boxShadow: '0 2px 8px rgba(99,102,241,0.5)',
-          }}
-          title="Add transition"
+          className="w-6 h-6 rounded-md flex items-center justify-center bg-gradient-to-br from-pink-500 to-indigo-600 text-white shadow-lg hover:shadow-indigo-500/30 hover:scale-110 transition-all active:scale-95 border border-white/20"
+          title={`Transition: ${leftClip.transition}`}
         >
-          <Plus size={8} className="text-white" />
+          <span className="text-[9px] font-bold tracking-tighter uppercase">tr</span>
+        </button>
+      ) : (
+        /* Modern "+" Add Transition Button */
+        <button
+          onClick={(e) => { e.stopPropagation(); onAdd(e, leftClip.id); }}
+          className="w-5 h-5 rounded-md flex items-center justify-center bg-white/95 hover:bg-indigo-600 hover:text-white text-gray-500 shadow-md hover:shadow-indigo-500/25 border border-gray-200/80 hover:border-indigo-500 hover:scale-115 opacity-40 group-hover:opacity-100 transition-all active:scale-90"
+          style={{ backdropFilter: 'blur(4px)' }}
+          title="Add Transition"
+        >
+          <Plus size={10} className="stroke-[2.5]" />
         </button>
       )}
     </div>

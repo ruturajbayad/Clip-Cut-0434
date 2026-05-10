@@ -278,15 +278,15 @@ export default function TransportBar() {
       {/* Zoom */}
       <div className="flex items-center gap-1 shrink-0">
         <button
-          onClick={() => setZoom(Math.max(10, zoom - 10))}
+          onClick={() => setZoom(Math.max(5, zoom * 0.75))}
           className="p-1.5 rounded hover:bg-gray-100 text-gray-400 transition-colors"
           title="Zoom out"
         >
           <ZoomOut size={13} />
         </button>
-        <span className="text-[11px] text-gray-600 w-9 text-center font-medium">{zoom}%</span>
+        <span className="text-[11px] text-gray-600 w-14 text-center font-mono">{Math.round(zoom)}%</span>
         <button
-          onClick={() => setZoom(Math.min(200, zoom + 10))}
+          onClick={() => setZoom(Math.min(800, zoom * 1.33))}
           className="p-1.5 rounded hover:bg-gray-100 text-gray-400 transition-colors"
           title="Zoom in"
         >

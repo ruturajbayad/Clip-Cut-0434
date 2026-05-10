@@ -14,7 +14,7 @@ import {
 import { useShallow } from 'zustand/react/shallow';
 import { motion } from 'framer-motion';
 import {
-  Plus, Maximize2, Video, Music, Type,
+  Plus, Maximize2, Video, Music, Type, ImageIcon,
 } from 'lucide-react';
 import { useEditorStore, type Track, type Clip } from '../../store/editorStore';
 import { Ruler, LABEL_W, RULER_H } from './components/Ruler';
@@ -32,7 +32,7 @@ const MINIBAR_H      = 10;
 const TOOLBAR_H      = 32;
 
 const TRACK_COLORS: Record<string, string> = {
-  video: '#6366f1', audio: '#10b981', text: '#f59e0b', effects: '#ec4899',
+  video: '#6366f1', audio: '#10b981', text: '#f59e0b', effects: '#ec4899', image: '#06b6d4',
 };
 
 // ─── Single Track Row (clips area only) ───────────────────────────────────────
@@ -222,6 +222,7 @@ export default function Timeline() {
   })));
 
   const scrollRef      = useRef<HTMLDivElement>(null);
+  const rulerScrollRef = useRef<HTMLDivElement>(null); // mirrors main scroll for ruler
   const outerRef       = useRef<HTMLDivElement>(null);
   const playheadRef    = useRef<PlayheadHandle>(null);
   const rulerPlayheadRef = useRef<HTMLDivElement>(null); // ruler's own playhead line
@@ -229,6 +230,7 @@ export default function Timeline() {
   // Use refs for values needed inside RAF callbacks to avoid stale closures
   const scrollLeftRef  = useRef(0);
   const pxPerSecRef    = useRef(zoom);
+  const zoomRef        = useRef(zoom);  // always-fresh zoom for wheel handler
   const isPlayingRef   = useRef(isPlaying);
   const currentTimeRef = useRef(currentTime);
 
@@ -245,7 +247,7 @@ export default function Timeline() {
   const allClips   = useMemo(() => project.tracks.flatMap((t) => t.clips), [project]);
 
   // Keep refs up to date
-  useEffect(() => { pxPerSecRef.current = zoom; }, [zoom]);
+  useEffect(() => { pxPerSecRef.current = zoom; zoomRef.current = zoom; }, [zoom]);
   useEffect(() => { isPlayingRef.current = isPlaying; }, [isPlaying]);
   useEffect(() => { currentTimeRef.current = currentTime; }, [currentTime]);
 
@@ -259,7 +261,7 @@ export default function Timeline() {
     return () => obs.disconnect();
   }, []);
 
-  // Track scroll position — update both state (for ruler) and ref (for playhead)
+  // Track scroll position — sync ruler scroll, update state+ref, move playhead
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
@@ -267,6 +269,8 @@ export default function Timeline() {
       const sl = el.scrollLeft;
       scrollLeftRef.current = sl;
       setScrollLeft(sl);
+      // Mirror scroll into ruler scroll container
+      if (rulerScrollRef.current) rulerScrollRef.current.scrollLeft = sl;
       // Also immediately reposition playhead DOM node
       const x = currentTimeRef.current * pxPerSecRef.current - sl;
       playheadRef.current?.moveTo(x, currentTimeRef.current);
@@ -303,21 +307,35 @@ export default function Timeline() {
     });
   }, []);
 
-  // Mouse wheel zoom (Ctrl/Cmd + scroll)
+  // Mouse wheel zoom (Ctrl/Cmd + scroll) — uses zoomRef to avoid stale closures
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
     const onWheel = (e: WheelEvent) => {
       if (e.ctrlKey || e.metaKey) {
         e.preventDefault();
-        const delta   = -e.deltaY * 0.05;
-        const newZoom = Math.max(10, Math.min(400, zoom + delta * zoom * 0.1));
+        const currentZoom = zoomRef.current;
+        const factor = e.deltaY < 0 ? 1.12 : 1 / 1.12;
+        const newZoom = Math.max(5, Math.min(800, currentZoom * factor));
+
+        // Anchor zoom around mouse cursor position
+        const rect = el.getBoundingClientRect();
+        const mouseX = e.clientX - rect.left; // px offset inside scroll area
+        const timeAtCursor = (el.scrollLeft + mouseX) / currentZoom;
+        // After zoom, scroll so timeAtCursor stays under cursor
+        const newScrollLeft = timeAtCursor * newZoom - mouseX;
         setZoom(newZoom);
+        // Defer scroll update until after React re-render
+        requestAnimationFrame(() => {
+          if (scrollRef.current) scrollRef.current.scrollLeft = Math.max(0, newScrollLeft);
+        });
       }
     };
     el.addEventListener('wheel', onWheel, { passive: false });
     return () => el.removeEventListener('wheel', onWheel);
-  }, [zoom, setZoom]);
+  // Only bind once — uses zoomRef internally
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [setZoom]);
 
   const handleSeek = useCallback((t: number) => setCurrentTime(t), [setCurrentTime]);
 
@@ -326,7 +344,8 @@ export default function Timeline() {
     if (!el) return;
     const w   = el.clientWidth - 40;
     const dur = Math.max(project.duration, 1);
-    setZoom(Math.max(10, Math.floor(w / dur)));
+    setZoom(Math.max(5, Math.floor(w / dur)));
+    requestAnimationFrame(() => { if (scrollRef.current) scrollRef.current.scrollLeft = 0; });
   }, [project.duration, setZoom]);
 
   // Panel resize (drag top border)
@@ -422,7 +441,7 @@ export default function Timeline() {
               Tracks
             </span>
             <div className="flex items-center gap-0.5">
-              {(['video', 'audio', 'text'] as const).map((type) => (
+              {(['video', 'audio', 'text', 'image'] as const).map((type) => (
                 <button
                   key={type}
                   onClick={() => addTrack(type)}
@@ -432,7 +451,10 @@ export default function Timeline() {
                   onMouseEnter={(e) => (e.currentTarget.style.color = TRACK_COLORS[type])}
                   onMouseLeave={(e) => (e.currentTarget.style.color = '#9ca3af')}
                 >
-                  {type === 'video' ? <Video size={9} /> : type === 'audio' ? <Music size={9} /> : <Type size={9} />}
+                  {type === 'video' ? <Video size={9} /> :
+                   type === 'audio' ? <Music size={9} /> :
+                   type === 'image' ? <ImageIcon size={9} /> :
+                   <Type size={9} />}
                 </button>
               ))}
             </div>
@@ -462,61 +484,79 @@ export default function Timeline() {
           </div>
         </div>
 
-        {/* ── Scrollable clips area ── */}
-        <div
-          ref={scrollRef}
-          className="flex-1 min-w-0 overflow-auto tl-scroll-area"
-          style={{ position: 'relative', background: '#f8f9fa' }}
-        >
-          {/* Inner canvas */}
+        {/* ── Right column: ruler + scrollable clips stacked vertically ── */}
+        <div className="flex-1 min-w-0 flex flex-col overflow-hidden" style={{ position: 'relative' }}>
+          {/* ── Playhead (imperative update during playback) ── */}
+          <Playhead
+            ref={playheadRef}
+            currentTime={currentTime}
+            pxPerSec={pxPerSec}
+            scrollLeft={scrollLeft}
+            totalHeight="100%"
+            onSeek={handleSeek}
+          />
+          {/* ── Ruler row — fixed height, scrolls horizontally in sync with clips ── */}
           <div
+            ref={rulerScrollRef}
             style={{
-              width: clipsWidth,
-              minWidth: clipsWidth,
+              flexShrink: 0,
+              height: RULER_H,
+              overflowX: 'hidden',  // hidden — JS-synced to scrollRef
+              overflowY: 'hidden',
               position: 'relative',
-              minHeight: '100%',
             }}
           >
-            {/* ── Ruler ── */}
-            <Ruler
-              pxPerSec={pxPerSec}
-              duration={project.duration}
-              currentTime={currentTime}
-              scrollLeft={scrollLeft}
-              containerWidth={containerW}
-              onSeek={handleSeek}
-            />
-
-            {/* ── Playhead (imperative update during playback) ── */}
-            <Playhead
-              ref={playheadRef}
-              currentTime={currentTime}
-              pxPerSec={pxPerSec}
-              scrollLeft={scrollLeft}
-              totalHeight={totalPlayheadHeight}
-              onSeek={handleSeek}
-            />
-
-            {/* ── Track clip rows ── */}
-            {project.tracks.map((track) => (
-              <TrackClipsRow
-                key={track.id}
-                track={track}
-                clipsWidth={clipsWidth}
-                allClips={allClips}
-                height={getTrackH(track)}
-                collapsed={isCollapsed(track)}
+            {/* Inner canvas matches clips width so ruler ticks align perfectly */}
+            <div style={{ width: clipsWidth, minWidth: clipsWidth, height: RULER_H, position: 'relative' }}>
+              <Ruler
+                pxPerSec={pxPerSec}
+                duration={project.duration}
+                currentTime={currentTime}
+                scrollLeft={scrollLeft}
+                containerWidth={containerW}
+                onSeek={handleSeek}
               />
-            ))}
+            </div>
+          </div>
 
-            {project.tracks.length === 0 && (
-              <div
-                className="flex flex-col items-center justify-center gap-3 pointer-events-none"
-                style={{ paddingTop: 40, paddingBottom: 40, opacity: 0.4 }}
-              >
-                <p className="text-xs text-gray-400">Drag media here or add a track</p>
-              </div>
-            )}
+          {/* ── Scrollable clips area (no ruler inside) ── */}
+          <div
+            ref={scrollRef}
+            className="flex-1 min-h-0 overflow-auto tl-scroll-area"
+            style={{ position: 'relative', background: '#f8f9fa' }}
+          >
+            {/* Inner canvas */}
+            <div
+              style={{
+                width: clipsWidth,
+                minWidth: clipsWidth,
+                position: 'relative',
+                minHeight: '100%',
+              }}
+            >
+
+
+              {/* ── Track clip rows ── */}
+              {project.tracks.map((track) => (
+                <TrackClipsRow
+                  key={track.id}
+                  track={track}
+                  clipsWidth={clipsWidth}
+                  allClips={allClips}
+                  height={getTrackH(track)}
+                  collapsed={isCollapsed(track)}
+                />
+              ))}
+
+              {project.tracks.length === 0 && (
+                <div
+                  className="flex flex-col items-center justify-center gap-3 pointer-events-none"
+                  style={{ paddingTop: 40, paddingBottom: 40, opacity: 0.4 }}
+                >
+                  <p className="text-xs text-gray-400">Drag media here or add a track</p>
+                </div>
+              )}
+            </div>
           </div>
         </div>
       </div>
@@ -534,7 +574,7 @@ export default function Timeline() {
         }}
       >
         <button
-          onClick={() => setZoom(Math.max(10, zoom * 0.8))}
+          onClick={() => setZoom(Math.max(5, zoom * 0.75))}
           className="px-1.5 py-0.5 rounded text-[11px] font-mono transition-colors"
           style={{ color: '#6b7280' }}
           onMouseEnter={(e) => (e.currentTarget.style.background = '#f3f4f6')}
@@ -548,12 +588,12 @@ export default function Timeline() {
           style={{ background: '#f3f4f6', minWidth: 64, justifyContent: 'center' }}
         >
           <span className="text-[10px] font-mono" style={{ color: '#6b7280' }}>
-            {Math.round(pxPerSec)}px/s
+            {Math.round(pxPerSec)}%
           </span>
         </div>
 
         <button
-          onClick={() => setZoom(Math.min(400, zoom * 1.25))}
+          onClick={() => setZoom(Math.min(800, zoom * 1.33))}
           className="px-1.5 py-0.5 rounded text-[11px] font-mono transition-colors"
           style={{ color: '#6b7280' }}
           onMouseEnter={(e) => (e.currentTarget.style.background = '#f3f4f6')}

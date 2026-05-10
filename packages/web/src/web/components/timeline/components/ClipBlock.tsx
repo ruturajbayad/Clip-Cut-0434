@@ -7,6 +7,7 @@ import {
 import { useEditorStore, type Clip } from '../../../store/editorStore';
 import { useShallow } from 'zustand/react/shallow';
 import { computeSnapTargets, snapToTargets } from '../utils/snap';
+import { useAudioPeaks } from '../utils/audioWaveform';
 import { fmtTime } from '../utils/time';
 
 // Light-theme clip colors
@@ -46,6 +47,14 @@ const CLIP_STYLES: Record<string, {
     label: '#9d174d',
     accent: '#ec4899',
   },
+  image: {
+    border: '#06b6d4',
+    bg: 'linear-gradient(135deg, #ecfeff 0%, #cffafe 100%)',
+    bgSelected: 'linear-gradient(135deg, #cffafe 0%, #a5f3fc 100%)',
+    wave: '#22d3ee',
+    label: '#0e7490',
+    accent: '#06b6d4',
+  },
 };
 
 interface ClipBlockProps {
@@ -79,6 +88,8 @@ export const ClipBlock = memo(function ClipBlock({
   const st = CLIP_STYLES[clip.type] || CLIP_STYLES.video;
   const left  = clip.startTime * pxPerSec;
   const width = Math.max(20, clip.duration * pxPerSec);
+
+
 
   // ── Move drag ──────────────────────────────────────────────────────────────
   const handleMoveDown = useCallback((e: React.MouseEvent) => {
@@ -146,7 +157,8 @@ export const ClipBlock = memo(function ClipBlock({
   }, []);
 
   const thumbnailCount = Math.min(16, Math.max(1, Math.floor(width / 36)));
-  const waveBarCount   = Math.min(150, Math.max(3, Math.floor(width / 2.5)));
+  const waveBarCount   = Math.min(300, Math.max(10, Math.floor(width / 4)));
+  const peaks = useAudioPeaks(clip.src, clip.id, waveBarCount, clip.duration);
 
   return (
     <>
@@ -184,6 +196,24 @@ export const ClipBlock = memo(function ClipBlock({
             style={{ background: st.border }}
           />
 
+          {/* Left / Right Fade Handles (Modern Editing UI styling) */}
+          {width > 20 && (
+            <>
+              <div className="absolute top-0 left-[4px] w-2.5 h-2.5 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-30">
+                <svg width="10" height="10" viewBox="0 0 10 10" fill="none" className="text-gray-400">
+                  <path d="M0 0 H10 C10 0 5 5 0 10 Z" fill="currentColor" className="opacity-40" />
+                  <circle cx="2" cy="2" r="1.2" fill="#fff" />
+                </svg>
+              </div>
+              <div className="absolute top-0 right-[1px] w-2.5 h-2.5 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-30">
+                <svg width="10" height="10" viewBox="0 0 10 10" fill="none" className="text-gray-400">
+                  <path d="M10 0 H0 C0 0 5 5 10 10 Z" fill="currentColor" className="opacity-40" />
+                  <circle cx="8" cy="2" r="1.2" fill="#fff" />
+                </svg>
+              </div>
+            </>
+          )}
+
           {/* VIDEO: filmstrip */}
           {clip.type === 'video' && width > 28 && (
             <div className="absolute inset-0 left-[3px] flex overflow-hidden pointer-events-none">
@@ -208,22 +238,16 @@ export const ClipBlock = memo(function ClipBlock({
           {/* AUDIO: waveform */}
           {clip.type === 'audio' && (
             <div
-              className="absolute inset-0 left-[3px] flex items-center overflow-hidden pointer-events-none"
-              style={{ padding: '3px 3px', gap: 1 }}
+              className="absolute inset-0 left-[4px] right-[1px] flex items-center justify-between overflow-hidden pointer-events-none"
+              style={{ padding: '3px 0px' }}
             >
-              {Array.from({ length: waveBarCount }).map((_, i) => {
-                const h =
-                  Math.abs(Math.sin(i * 0.31) * 0.5) +
-                  Math.abs(Math.sin(i * 0.89 + 1.2) * 0.3) +
-                  Math.abs(Math.sin(i * 2.1 + 0.7) * 0.2);
-                return (
-                  <div
-                    key={i}
-                    className="shrink-0 rounded-full"
-                    style={{ width: 1.5, height: `${Math.min(88, 12 + h * 75)}%`, background: st.wave, opacity: 0.7 }}
-                  />
-                );
-              })}
+              {peaks.map((h, i) => (
+                <div
+                  key={i}
+                  className="shrink-0 rounded-full"
+                  style={{ width: 1.5, height: `${Math.min(92, 12 + h * 76)}%`, background: st.wave, opacity: 0.7 }}
+                />
+              ))}
             </div>
           )}
 
@@ -272,7 +296,19 @@ export const ClipBlock = memo(function ClipBlock({
             </div>
           )}
 
-          {/* Transition dot */}
+          {/* Visual transition wedge */}
+          {clip.transition && (
+            <div
+              className="absolute right-0 top-0 bottom-0 pointer-events-none rounded-r-[4px]"
+              style={{
+                width: Math.min(width, 0.5 * pxPerSec),
+                background: 'linear-gradient(to top left, rgba(236,72,153,0.2) 0%, transparent 100%)',
+                borderRight: '1.5px solid rgba(236,72,153,0.6)',
+              }}
+            />
+          )}
+
+          {/* Transition dot / button */}
           <div
             className="absolute right-1 top-1/2 -translate-y-1/2 z-30 opacity-0 group-hover:opacity-100 transition-opacity"
             style={{ opacity: clip.transition ? 1 : undefined }}
@@ -280,14 +316,17 @@ export const ClipBlock = memo(function ClipBlock({
           >
             <button
               onClick={(e) => { e.stopPropagation(); onTransition(e); }}
-              className="w-4 h-4 rounded-full flex items-center justify-center transition-transform hover:scale-125"
+              className="w-[20px] h-[20px] rounded-md flex items-center justify-center transition-all hover:scale-110 active:scale-95 shadow-md border"
               style={{
-                background: clip.transition ? '#ec4899' : 'rgba(0,0,0,0.12)',
-                border: '1px solid rgba(0,0,0,0.15)',
+                background: clip.transition 
+                  ? 'linear-gradient(135deg, #ec4899, #8b5cf6)' 
+                  : 'rgba(255,255,255,0.9)',
+                borderColor: clip.transition ? 'rgba(255,255,255,0.2)' : 'rgba(0,0,0,0.1)',
+                boxShadow: clip.transition ? '0 2px 6px rgba(236,72,153,0.4)' : '0 2px 4px rgba(0,0,0,0.06)',
               }}
               title={clip.transition ? `Transition: ${clip.transition}` : 'Add transition'}
             >
-              <ArrowLeftRight size={6} style={{ color: clip.transition ? '#fff' : '#666' }} />
+              <ArrowLeftRight size={9} style={{ color: clip.transition ? '#fff' : '#4b5563' }} />
             </button>
           </div>
         </div>

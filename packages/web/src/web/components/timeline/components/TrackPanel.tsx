@@ -1,7 +1,7 @@
 import { useState, useCallback, memo } from 'react';
 import {
   Lock, Unlock, Eye, EyeOff, Volume2, VolumeX,
-  ChevronDown, ChevronRight, Video, Music, Type, Sparkles, Trash2,
+  ChevronDown, ChevronRight, Video, Music, Type, Sparkles, Trash2, ImageIcon,
 } from 'lucide-react';
 import { useEditorStore, type Track } from '../../../store/editorStore';
 import { useShallow } from 'zustand/react/shallow';
@@ -13,6 +13,7 @@ const TRACK_META: Record<string, { color: string; Icon: React.ComponentType<{ si
   audio:   { color: '#10b981', Icon: Music },
   text:    { color: '#f59e0b', Icon: Type },
   effects: { color: '#ec4899', Icon: Sparkles },
+  image:   { color: '#06b6d4', Icon: ImageIcon },
 };
 
 interface TrackPanelProps {

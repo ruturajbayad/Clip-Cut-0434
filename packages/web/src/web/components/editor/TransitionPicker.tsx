@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useLayoutEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { ArrowLeftRight, Search, X } from 'lucide-react';
 import { useEditorStore } from '../../store/editorStore';
@@ -19,6 +19,10 @@ const TRANSITIONS = [
   { id: 'page-turn', name: 'Page Turn', duration: '0.8s', gradient: 'from-sky-100 to-blue-100' },
 ];
 
+const PICKER_W  = 300;
+const PICKER_H  = 400;
+const GAP       = 12;
+
 export default function TransitionPicker() {
   const { showTransitionPicker, transitionPickerPosition, setShowTransitionPicker, updateClip, transitionPickerClipId } = useEditorStore(useShallow((s) => ({
     showTransitionPicker: s.showTransitionPicker,
@@ -30,6 +34,31 @@ export default function TransitionPicker() {
   const [search, setSearch] = useState('');
   const [selected, setSelected] = useState<string | null>(null);
   const [hoveredId, setHoveredId] = useState<string | null>(null);
+
+  // Smart viewport-aware positioning
+  const popoverRef = useRef<HTMLDivElement>(null);
+  const [pos, setPos] = useState({ left: 0, top: 0 });
+
+  useLayoutEffect(() => {
+    if (!showTransitionPicker || !transitionPickerPosition) return;
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    const { x, y } = transitionPickerPosition;
+
+    // Prefer opening ABOVE the click point (timeline is usually at the bottom)
+    let top = y - PICKER_H - GAP;
+    // If not enough space above, open below
+    if (top < 8) top = y + GAP;
+    // Clamp bottom edge
+    if (top + PICKER_H > vh - 8) top = vh - PICKER_H - 8;
+    top = Math.max(8, top);
+
+    // Horizontal: centre on click, clamp both edges
+    let left = x - PICKER_W / 2;
+    left = Math.max(8, Math.min(left, vw - PICKER_W - 8));
+
+    setPos({ left, top });
+  }, [showTransitionPicker, transitionPickerPosition]);
 
   if (!showTransitionPicker || !transitionPickerPosition) return null;
 
@@ -47,15 +76,16 @@ export default function TransitionPicker() {
     <>
       <div className="fixed inset-0 z-50" onClick={() => setShowTransitionPicker(false)} />
       <motion.div
-        initial={{ opacity: 0, scale: 0.9, y: -8 }}
+        ref={popoverRef}
+        initial={{ opacity: 0, scale: 0.9, y: 8 }}
         animate={{ opacity: 1, scale: 1, y: 0 }}
-        exit={{ opacity: 0, scale: 0.9, y: -8 }}
+        exit={{ opacity: 0, scale: 0.9, y: 8 }}
         className="fixed z-50 bg-white border border-gray-200 rounded-xl shadow-2xl overflow-hidden"
         style={{
-          left: Math.min(transitionPickerPosition.x - 150, window.innerWidth - 320),
-          top: transitionPickerPosition.y + 12,
-          width: 300,
-          maxHeight: 400,
+          left: pos.left,
+          top: pos.top,
+          width: PICKER_W,
+          maxHeight: PICKER_H,
         }}
       >
         <div className="p-3 border-b border-gray-100 flex items-center justify-between">

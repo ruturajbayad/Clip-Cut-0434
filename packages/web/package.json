@@ -9,11 +9,11 @@
     "build": "tsc --noEmit && vite build",
     "dev": "vite",
     "lint": "eslint .",
-    "preview": "bun run build && vite preview",
-    "db:generate": "bun --env-file=../../.env drizzle-kit generate",
-    "db:migrate": "bun --env-file=../../.env drizzle-kit migrate",
-    "db:push": "bun --env-file=../../.env drizzle-kit push",
-    "db:studio": "bun --env-file=../../.env drizzle-kit studio"
+    "preview": "npm run build && vite preview",
+    "db:generate": "node --env-file=../../.env npx drizzle-kit generate",
+    "db:migrate": "node --env-file=../../.env npx drizzle-kit migrate",
+    "db:push": "node --env-file=../../.env npx drizzle-kit push",
+    "db:studio": "node --env-file=../../.env npx drizzle-kit studio"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",

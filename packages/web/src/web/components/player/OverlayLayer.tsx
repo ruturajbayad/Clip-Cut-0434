@@ -4,6 +4,7 @@
  * Renders CanvasElement wrappers for:
  *  - Active video clips (transparent hit area for drag/resize; actual video is in VideoLayer)
  *  - Active text clips (rendered text)
+ *  - Active image clips (rendered <img> as moveable/resizable overlays)
  *
  * This layer re-renders at ~15fps via currentTime subscription (acceptable since
  * it's only a thin CSS/SVG overlay, not video decoding).
@@ -14,7 +15,6 @@
 
 import { memo, useCallback } from 'react';
 import { interpolateClip, useEditorStore, type Clip } from '../../store/editorStore';
-import { TRANSITION_DURATION, TransitionOverlay } from './TransitionOverlay';
 
 interface CanvasElementProps {
   clip: Clip;
@@ -74,7 +74,7 @@ export function CanvasElement({
             style={{ boxShadow: '0 0 0 2px #fff, 0 0 0 3px #6366f1', zIndex: 30 }}
           />
 
-          {/* Resize handles — only for overlay/text clips */}
+          {/* Resize handles — only for overlay/text/image clips */}
           {isOverlay && ([
             { cls: 'top-0 left-0 cursor-nw-resize', dx: -1, dy: -1 },
             { cls: 'top-0 right-0 cursor-ne-resize', dx: 1, dy: -1 },
@@ -124,48 +124,38 @@ export function CanvasElement({
 interface OverlayLayerProps {
   activeVideoClips: Clip[];   // video clips active at currentTime
   activeTextClips: Clip[];    // text clips active at currentTime
+  activeImageClips: Clip[];   // image clips active at currentTime (rendered as <img> overlays)
   overlayVideoClips: Clip[];  // video clips that are overlays (not main track)
   currentTime: number;
   canvasW: number;
   canvasH: number;
   selectedClipId: string | null;
   onSelect: (id: string | null) => void;
+  mediaLibrary: { id: string; src: string }[];
 }
 
 export const OverlayLayer = memo(function OverlayLayer({
   activeVideoClips,
   activeTextClips,
+  activeImageClips,
   overlayVideoClips,
   currentTime,
   canvasW,
   canvasH,
   selectedClipId,
   onSelect,
+  mediaLibrary,
 }: OverlayLayerProps) {
   const overlayIds = new Set(overlayVideoClips.map((c) => c.id));
 
   return (
     <>
-      {/* Video hit areas + transitions (overlay clips are moveable) */}
+      {/* Video hit areas (overlay clips are moveable) */}
       {activeVideoClips.map((clip) => {
         const interp = interpolateClip(clip, currentTime);
         const liveClip = Object.keys(interp).length > 0 ? { ...clip, ...interp } : clip;
         const isSelected = selectedClipId === clip.id;
         const isOverlay = overlayIds.has(clip.id);
-
-        let transitionEl: React.ReactNode = null;
-        if (clip.transition) {
-          const clipEnd = clip.startTime + clip.duration;
-          const tStart = clipEnd - TRANSITION_DURATION;
-          if (currentTime >= tStart && currentTime <= clipEnd) {
-            transitionEl = (
-              <TransitionOverlay
-                type={clip.transition}
-                progress={(currentTime - tStart) / TRANSITION_DURATION}
-              />
-            );
-          }
-        }
 
         return (
           <CanvasElement
@@ -179,7 +169,48 @@ export const OverlayLayer = memo(function OverlayLayer({
           >
             {/* Transparent hit area — real video is in VideoLayer below */}
             <div className="w-full h-full" style={{ background: 'transparent' }} />
-            {transitionEl}
+          </CanvasElement>
+        );
+      })}
+
+      {/* Image clips — rendered as <img> overlays, fully draggable/resizable */}
+      {activeImageClips.map((clip) => {
+        const interp = interpolateClip(clip, currentTime);
+        const liveClip = Object.keys(interp).length > 0 ? { ...clip, ...interp } : clip;
+        const mediaSrc = clip.src ||
+          (clip.mediaId ? mediaLibrary.find((m) => m.id === clip.mediaId)?.src : undefined);
+
+        return (
+          <CanvasElement
+            key={clip.id}
+            clip={liveClip}
+            isSelected={selectedClipId === clip.id}
+            canvasW={canvasW}
+            canvasH={canvasH}
+            onSelect={() => onSelect(clip.id)}
+            isOverlay
+          >
+            {mediaSrc ? (
+              <img
+                src={mediaSrc}
+                alt={clip.name}
+                className="w-full h-full"
+                style={{
+                  objectFit: 'contain',
+                  opacity: liveClip.opacity ?? 1,
+                  pointerEvents: 'none',
+                  userSelect: 'none',
+                  display: 'block',
+                }}
+              />
+            ) : (
+              <div
+                className="w-full h-full flex items-center justify-center rounded"
+                style={{ background: `${clip.thumbnailColor || '#818CF8'}44` }}
+              >
+                <span className="text-white text-xs opacity-60">IMG</span>
+              </div>
+            )}
           </CanvasElement>
         );
       })}

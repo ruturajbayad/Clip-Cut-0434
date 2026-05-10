@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { nanoid } from 'nanoid';
 
-export type TrackType = 'video' | 'audio' | 'text' | 'effects';
+export type TrackType = 'video' | 'audio' | 'text' | 'effects' | 'image';
 
 export interface Keyframe {
   id: string;
@@ -85,7 +85,7 @@ export function computeDuration(tracks: Track[]): number {
       max = Math.max(max, c.startTime + c.duration);
     }
   }
-  return Math.max(max, 10); // minimum 10s
+  return max === 0 ? 0 : Math.max(max, 10);
 }
 
 // ── Easing functions ──────────────────────────────────────────────────────────
@@ -195,6 +195,19 @@ interface EditorState {
   updateKeyframe: (clipId: string, keyframeId: string, updates: Partial<Omit<Keyframe, 'id'>>) => void;
 }
 
+// The default video MediaItem uses the static public file served by Vite
+const DEFAULT_VIDEO_MEDIA_ID = 'default-4k-video';
+const DEFAULT_VIDEO_SRC      = '/4k_video.mp4';
+
+export const defaultVideoMediaItem: MediaItem = {
+  id:             DEFAULT_VIDEO_MEDIA_ID,
+  name:           '4K Video',
+  type:           'video',
+  src:            DEFAULT_VIDEO_SRC,
+  duration:       23,
+  thumbnailColor: '#818CF8',
+};
+
 const makeDefaultTracks = (): Track[] => {
   const v1id = nanoid();
   const a1id = nanoid();
@@ -209,9 +222,9 @@ const makeDefaultTracks = (): Track[] => {
       visible: true,
       height: 56,
       clips: [
-        { id: nanoid(), trackId: v1id, name: 'Clip 01.mp4', type: 'video', startTime: 0,  duration: 8, thumbnailColor: '#818CF8', opacity: 1, x: 0.5, y: 0.5, scaleX: 1, scaleY: 1, trimStart: 0 },
-        { id: nanoid(), trackId: v1id, name: 'Clip 02.mp4', type: 'video', startTime: 9,  duration: 7, thumbnailColor: '#6366F1', opacity: 1, x: 0.5, y: 0.5, scaleX: 1, scaleY: 1, trimStart: 0 },
-        { id: nanoid(), trackId: v1id, name: 'Clip 03.mp4', type: 'video', startTime: 17, duration: 6, thumbnailColor: '#818CF8', opacity: 1, x: 0.5, y: 0.5, scaleX: 1, scaleY: 1, trimStart: 0 },
+        { id: nanoid(), trackId: v1id, name: 'Clip 01.mp4', type: 'video', startTime: 0,  duration: 8,  thumbnailColor: '#818CF8', opacity: 1, x: 0.5, y: 0.5, scaleX: 1, scaleY: 1, trimStart: 0,  src: DEFAULT_VIDEO_SRC, mediaId: DEFAULT_VIDEO_MEDIA_ID },
+        { id: nanoid(), trackId: v1id, name: 'Clip 02.mp4', type: 'video', startTime: 8,  duration: 8,  thumbnailColor: '#6366F1', opacity: 1, x: 0.5, y: 0.5, scaleX: 1, scaleY: 1, trimStart: 8,  src: DEFAULT_VIDEO_SRC, mediaId: DEFAULT_VIDEO_MEDIA_ID },
+        { id: nanoid(), trackId: v1id, name: 'Clip 03.mp4', type: 'video', startTime: 16, duration: 7,  thumbnailColor: '#818CF8', opacity: 1, x: 0.5, y: 0.5, scaleX: 1, scaleY: 1, trimStart: 16, src: DEFAULT_VIDEO_SRC, mediaId: DEFAULT_VIDEO_MEDIA_ID },
       ],
     },
     {
@@ -255,7 +268,7 @@ const defaultProject: Project = {
 
 export const useEditorStore = create<EditorState>((set, get) => ({
   project: defaultProject,
-  mediaLibrary: [],
+  mediaLibrary: [defaultVideoMediaItem],
   currentTime: 0,
   isPlaying: false,
   zoom: 50,
@@ -271,7 +284,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
 
   setCurrentTime: (time) => set({ currentTime: Math.max(0, time) }),
   setIsPlaying: (playing) => set({ isPlaying: playing }),
-  setZoom: (zoom) => set({ zoom: Math.min(200, Math.max(10, zoom)) }),
+  setZoom: (zoom) => set({ zoom: Math.min(800, Math.max(5, zoom)) }),
   setSelectedClip: (id) => set({ selectedClipId: id }),
   setSelectedTrack: (id) => set({ selectedTrackId: id }),
   setActivePanel: (panel) => set({ activePanel: panel }),
@@ -304,11 +317,13 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         {
           id,
           type,
-          name: `${type.charAt(0).toUpperCase() + type.slice(1)} ${state.project.tracks.filter((t) => t.type === type).length + 1}`,
+          name: type === 'image'
+            ? `Image ${state.project.tracks.filter((t) => t.type === type).length + 1}`
+            : `${type.charAt(0).toUpperCase() + type.slice(1)} ${state.project.tracks.filter((t) => t.type === type).length + 1}`,
           muted: false,
           locked: false,
           visible: true,
-          height: type === 'video' ? 56 : 44,
+          height: type === 'video' ? 56 : type === 'image' ? 48 : 44,
           clips: [],
         },
       ];
@@ -347,17 +362,32 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   addClipFromMedia: (media, trackType) => {
     get().saveToUndo();
     const { project } = get();
-    const type: TrackType = trackType || (media.type === 'audio' ? 'audio' : media.type === 'image' ? 'video' : 'video');
-    // Find first matching track or create one
-    let track = project.tracks.find((t) => t.type === type);
+
+    // Route image media to dedicated 'image' track; video stays on 'video'; audio on 'audio'
+    const type: TrackType = trackType ||
+      (media.type === 'audio' ? 'audio' :
+       media.type === 'image' ? 'image' : 'video');
+
+    // For video: if the main video track already has clips, always add to a NEW overlay video track
+    // so multiple video clips can be managed as PIP overlays
+    let track: Track | undefined;
     let newTracks = project.tracks;
+
+    if (type === 'video') {
+      // Always append to first video track by default (user can add more tracks explicitly)
+      track = project.tracks.find((t) => t.type === 'video');
+    } else {
+      track = project.tracks.find((t) => t.type === type);
+    }
 
     if (!track) {
       const id = nanoid();
+      const trackNum = project.tracks.filter((t) => t.type === type).length + 1;
       track = {
         id,
         type,
-        name: `${type.charAt(0).toUpperCase() + type.slice(1)} ${project.tracks.filter((t) => t.type === type).length + 1}`,
+        name: type === 'image' ? `Image ${trackNum}` :
+              `${type.charAt(0).toUpperCase() + type.slice(1)} ${trackNum}`,
         muted: false,
         locked: false,
         visible: true,
@@ -371,6 +401,9 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     const trackClips = newTracks.find((t) => t.id === track!.id)?.clips || [];
     const endTime = trackClips.reduce((max, c) => Math.max(max, c.startTime + c.duration), 0);
 
+    // Image overlays default to 40% canvas size, centered; full video fills canvas
+    const isImageOverlay = type === 'image';
+
     const newClip: Clip = {
       id: nanoid(),
       trackId: track.id,
@@ -382,7 +415,10 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       mediaId: media.id,
       thumbnailColor: media.thumbnailColor || '#818CF8',
       opacity: 1,
-      x: 0.5, y: 0.5, scaleX: 1, scaleY: 1,
+      x: 0.5,
+      y: 0.5,
+      scaleX: isImageOverlay ? 0.4 : 1,
+      scaleY: isImageOverlay ? 0.4 : 1,
       trimStart: 0,
     };
 
@@ -432,7 +468,8 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         }),
       }));
       if (!targetClip) return state;
-      const updatedClip = { ...targetClip, trackId: newTrackId, startTime: Math.max(0, newStartTime) };
+      const clipToUpdate: Clip = targetClip;
+      const updatedClip = { ...clipToUpdate, trackId: newTrackId, startTime: Math.max(0, newStartTime) };
       const newTracks = tracks.map((t) =>
         t.id === newTrackId ? { ...t, clips: [...t.clips, updatedClip] } : t
       );

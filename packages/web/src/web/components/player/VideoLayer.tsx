@@ -4,16 +4,11 @@
  * All video clips are rendered as <video> elements here and NEVER unmounted.
  * Visibility is controlled imperatively by MediaEngine via wrapperEls.
  *
- * This component re-renders only when the list of video clips changes
- * (i.e. clip added/removed), NOT on every frame. That is the key to
- * smooth 4K playback — React is not involved in per-frame updates.
+ * Main track (first video track) videos fill the entire canvas (object-cover).
+ * Overlay track videos use object-contain and their wrapper is sized/positioned
+ * by OverlayLayer's CanvasElement drag/resize — so the <video> just fills its parent.
  *
- * Props:
- *  - videoClips: all Clip objects with type === 'video'
- *  - mediaLibrary: MediaItem[]
- *  - currentTime: for initial display check only (not subscribed for RAF)
- *  - onVideoRef: callback to register <video> element with MediaEngine
- *  - onWrapperRef: callback to register wrapper div with MediaEngine
+ * Image clips are NOT rendered here — they are rendered directly in OverlayLayer.
  */
 
 import { memo } from 'react';
@@ -23,25 +18,24 @@ import type { Clip, MediaItem } from '../../store/editorStore';
 interface VideoLayerProps {
   videoClips: Clip[];
   mediaLibrary: MediaItem[];
-  currentTime: number;
   onVideoRef: (clipId: string, el: HTMLVideoElement | null) => void;
   onWrapperRef: (clipId: string, el: HTMLDivElement | null) => void;
+  mainTrackId: string | undefined;
 }
 
 /**
- * Single video wrapper — memoised so it only re-renders when clip identity changes,
- * not when other clips or currentTime changes.
+ * Single video wrapper — memoised so it only re-renders when clip identity changes.
  */
 const VideoItem = memo(function VideoItem({
   clip,
   media,
-  initVisible,
+  isOverlay,
   onVideoRef,
   onWrapperRef,
 }: {
   clip: Clip;
   media: MediaItem | undefined;
-  initVisible: boolean;
+  isOverlay: boolean;
   onVideoRef: (clipId: string, el: HTMLVideoElement | null) => void;
   onWrapperRef: (clipId: string, el: HTMLDivElement | null) => void;
 }) {
@@ -49,21 +43,35 @@ const VideoItem = memo(function VideoItem({
     <div
       ref={(el) => onWrapperRef(clip.id, el)}
       style={{
-        display: initVisible ? 'block' : 'none',
+        // IMPORTANT: Start hidden via opacity, NOT display:none.
+        // display:none destroys the GPU compositor layer → flash when re-shown.
+        // opacity:0 + visibility:hidden keeps the element on the GPU tree at all times.
+        display: 'block',
+        opacity: 0,
+        visibility: 'hidden',
         position: 'absolute',
         inset: 0,
-        zIndex: 10,
+        zIndex: isOverlay ? 12 : 10,
+        // Force GPU compositor layer promotion immediately on mount.
+        // Eliminates the layout+paint+GPU-upload cost when we switch opacity.
+        willChange: 'opacity, transform',
+        transform: 'translateZ(0)',
+        pointerEvents: 'none',
       }}
     >
       {media?.type === 'video' ? (
         <video
           ref={(el) => onVideoRef(clip.id, el)}
           src={media.src}
-          className="w-full h-full object-cover"
+          className="w-full h-full"
+          style={{
+            objectFit: isOverlay ? 'contain' : 'cover',
+            display: 'block',
+            pointerEvents: 'none',
+          }}
           playsInline
           preload="auto"
           muted // starts muted; MediaEngine unmutes after user gesture
-          style={{ display: 'block', pointerEvents: 'none' }}
         />
       ) : media?.type === 'image' ? (
         <img
@@ -90,21 +98,26 @@ const VideoItem = memo(function VideoItem({
 export const VideoLayer = memo(function VideoLayer({
   videoClips,
   mediaLibrary,
-  currentTime,
   onVideoRef,
   onWrapperRef,
+  mainTrackId,
 }: VideoLayerProps) {
   return (
     <>
       {videoClips.map((clip) => {
-        const media = clip.mediaId ? mediaLibrary.find((m) => m.id === clip.mediaId) : undefined;
-        const initVisible = currentTime >= clip.startTime && currentTime < clip.startTime + clip.duration;
+        const media = clip.mediaId
+          ? mediaLibrary.find((m) => m.id === clip.mediaId)
+          : clip.src
+          ? ({ id: clip.id, name: clip.name, type: 'video' as const, src: clip.src } as MediaItem)
+          : undefined;
+
+        const isOverlay = clip.trackId !== mainTrackId;
         return (
           <VideoItem
             key={clip.id}
             clip={clip}
             media={media}
-            initVisible={initVisible}
+            isOverlay={isOverlay}
             onVideoRef={onVideoRef}
             onWrapperRef={onWrapperRef}
           />

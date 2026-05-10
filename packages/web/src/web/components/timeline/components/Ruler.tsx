@@ -18,9 +18,9 @@ export const Ruler = memo(function Ruler({
 }: RulerProps) {
   const { major, minor } = pickTickInterval(pxPerSec);
 
-  // Only render ticks visible in the viewport
+  // Only generate ticks visible in the viewport (use scrollLeft for culling only)
   const startT = Math.max(0, scrollLeft / pxPerSec - major);
-  const endT   = (scrollLeft + containerWidth) / pxPerSec + major;
+  const endT   = Math.min(duration + major, (scrollLeft + containerWidth) / pxPerSec + major);
 
   const ticks: Array<{ t: number; isMajor: boolean }> = [];
   const firstT = Math.floor(startT / minor) * minor;
@@ -32,14 +32,14 @@ export const Ruler = memo(function Ruler({
     ticks.push({ t: rounded, isMajor });
   }
 
-  // Seek on ruler click/drag
   const handleMouseDown = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
     e.preventDefault();
+    console.log("Ruler onMouseDown", e.clientX);
     const el = e.currentTarget as HTMLElement;
     const doSeek = (clientX: number) => {
       const rect = el.getBoundingClientRect();
-      // clientX relative to ruler left + scrollLeft = absolute canvas x
-      const rawX = clientX - rect.left + scrollLeft;
+      const rawX = clientX - rect.left;
+      console.log("Ruler doSeek rawX:", rawX, "pxPerSec:", pxPerSec, "time:", rawX / pxPerSec);
       onSeek(Math.max(0, rawX / pxPerSec));
     };
     doSeek(e.clientX);
@@ -50,26 +50,28 @@ export const Ruler = memo(function Ruler({
     };
     document.addEventListener('mousemove', mm);
     document.addEventListener('mouseup', mu);
-  }, [pxPerSec, scrollLeft, onSeek]);
+  }, [pxPerSec, onSeek]);
 
-  // Playhead x in ruler coords (relative to canvas scroll)
-  const playheadX = currentTime * pxPerSec - scrollLeft;
+  // Playhead x in absolute canvas coordinates (ruler is scrolled by JS so we use abs pos)
+  const playheadCanvasX = currentTime * pxPerSec;
+  const playheadVisible = playheadCanvasX >= scrollLeft - 2 && playheadCanvasX <= scrollLeft + containerWidth + 2;
 
   return (
     <div
-      className="tl-ruler sticky top-0 z-30 select-none cursor-col-resize overflow-hidden"
+      className="tl-ruler select-none cursor-col-resize"
       style={{
         height: RULER_H,
+        width: '100%',
         background: '#f8f9fa',
         borderBottom: '1px solid #e5e7eb',
-        position: 'sticky',
+        position: 'relative',
+        overflow: 'visible',
       }}
       onMouseDown={handleMouseDown}
     >
-      {/* Ticks — each placed at t * pxPerSec - scrollLeft */}
+      {/* Ticks at absolute canvas positions (no scrollLeft subtraction — parent is scrolled by JS) */}
       {ticks.map(({ t, isMajor }) => {
-        const x = t * pxPerSec - scrollLeft;
-        if (x < -4 || x > containerWidth + 4) return null;
+        const x = t * pxPerSec; // absolute canvas position
         return (
           <div key={t} className="absolute top-0" style={{ left: x }}>
             {isMajor ? (
@@ -95,11 +97,11 @@ export const Ruler = memo(function Ruler({
         );
       })}
 
-      {/* Playhead indicator in ruler */}
-      {playheadX >= -2 && playheadX <= containerWidth + 2 && (
+      {/* Playhead indicator in ruler at absolute canvas position */}
+      {playheadVisible && (
         <div
           className="absolute top-0 pointer-events-none z-10"
-          style={{ left: playheadX }}
+          style={{ left: playheadCanvasX }}
         >
           <div style={{ width: 1, height: RULER_H, background: '#ef4444', opacity: 0.9 }} />
           <div

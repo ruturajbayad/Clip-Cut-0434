@@ -25,7 +25,7 @@ interface PlayheadProps {
   currentTime: number;
   pxPerSec: number;
   scrollLeft: number;
-  totalHeight: number;
+  totalHeight: number | string;
   onSeek: (t: number) => void;
 }
 
@@ -111,13 +111,12 @@ export const Playhead = forwardRef<PlayheadHandle, PlayheadProps>(function Playh
             borderTop: '10px solid #ef4444',
           }}
         />
-        {/* Timecode badge */}
         <div
           ref={labelRef}
-          className="absolute font-mono text-white font-bold whitespace-nowrap rounded select-none"
+          className="absolute font-mono text-white font-bold whitespace-nowrap rounded select-none shadow-sm"
           style={{
             fontSize: 8,
-            bottom: 'calc(100% + 14px)',
+            top: '12px',
             left: '50%',
             transform: 'translateX(-50%)',
             background: '#ef4444',
