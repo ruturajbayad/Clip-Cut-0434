@@ -183,8 +183,8 @@ export default function PreviewCanvas() {
           style={{ width: canvasSize.w, height: canvasSize.h, borderRadius: 8, overflow: 'visible' }}
           onClick={() => setSelectedClip(null)}
         >
-          {/* Clipping mask */}
-          <div className="absolute inset-0 overflow-hidden" style={{ borderRadius: 8 }}>
+          {/* Clipping mask — data attr used by ExportModal to locate video elements */}
+          <div className="absolute inset-0 overflow-hidden" data-preview-canvas="root" style={{ borderRadius: 8 }}>
 
             {/* Empty state */}
             {!hasActiveVideo && (

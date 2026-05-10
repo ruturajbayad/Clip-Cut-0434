@@ -228,11 +228,15 @@ export default function Timeline() {
   const rulerPlayheadRef = useRef<HTMLDivElement>(null); // ruler's own playhead line
 
   // Use refs for values needed inside RAF callbacks to avoid stale closures
-  const scrollLeftRef  = useRef(0);
-  const pxPerSecRef    = useRef(zoom);
-  const zoomRef        = useRef(zoom);  // always-fresh zoom for wheel handler
-  const isPlayingRef   = useRef(isPlaying);
-  const currentTimeRef = useRef(currentTime);
+  const scrollLeftRef      = useRef(0);
+  const pxPerSecRef        = useRef(zoom);
+  const zoomRef            = useRef(zoom);  // always-fresh zoom for wheel handler
+  const isPlayingRef       = useRef(isPlaying);
+  const currentTimeRef     = useRef(currentTime);
+  // Track last time the user manually scrolled — suppress auto-scroll for 2s after
+  const userScrolledAtRef  = useRef<number>(0);
+  // Whether auto-follow is enabled (user can disable by scrolling manually)
+  const autoFollowRef      = useRef(true);
 
   const [scrollLeft, setScrollLeft]     = useState(0);
   const [containerW, setContainerW]     = useState(1200);
@@ -248,7 +252,11 @@ export default function Timeline() {
 
   // Keep refs up to date
   useEffect(() => { pxPerSecRef.current = zoom; zoomRef.current = zoom; }, [zoom]);
-  useEffect(() => { isPlayingRef.current = isPlaying; }, [isPlaying]);
+  useEffect(() => {
+    isPlayingRef.current = isPlaying;
+    // Re-enable auto-follow whenever playback starts
+    if (isPlaying) autoFollowRef.current = true;
+  }, [isPlaying]);
   useEffect(() => { currentTimeRef.current = currentTime; }, [currentTime]);
 
   // Measure scroll container
@@ -265,6 +273,16 @@ export default function Timeline() {
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
+    // Distinguish user-initiated scrolls from programmatic ones.
+    // We use pointer/wheel/touch events to set the "user scrolled" flag BEFORE the scroll fires.
+    const onUserInteract = () => {
+      userScrolledAtRef.current = performance.now();
+      autoFollowRef.current = false;
+    };
+    el.addEventListener('wheel',       onUserInteract, { passive: true });
+    el.addEventListener('pointerdown', onUserInteract, { passive: true });
+    el.addEventListener('touchstart',  onUserInteract, { passive: true });
+
     const h = () => {
       const sl = el.scrollLeft;
       scrollLeftRef.current = sl;
@@ -276,7 +294,12 @@ export default function Timeline() {
       playheadRef.current?.moveTo(x, currentTimeRef.current);
     };
     el.addEventListener('scroll', h, { passive: true });
-    return () => el.removeEventListener('scroll', h);
+    return () => {
+      el.removeEventListener('scroll', h);
+      el.removeEventListener('wheel',       onUserInteract);
+      el.removeEventListener('pointerdown', onUserInteract);
+      el.removeEventListener('touchstart',  onUserInteract);
+    };
   }, []);
 
   // Playhead DOM update when currentTime changes (while paused / scrubbing)
@@ -294,10 +317,26 @@ export default function Timeline() {
       const x  = t * pxPerSecRef.current - scrollLeftRef.current;
       playheadRef.current?.moveTo(x, t);
 
-      // Auto-scroll to follow playhead
+      // Auto-scroll to follow playhead — but ONLY if user hasn't manually scrolled
+      // in the last 3 seconds. Re-enable auto-follow when playhead goes out of view.
       const el = scrollRef.current;
-      if (el) {
-        const viewEnd = el.scrollLeft + el.clientWidth;
+      if (!el) return;
+
+      const now = performance.now();
+      const timeSinceUserScroll = now - userScrolledAtRef.current;
+
+      // Re-engage auto-follow if the playhead drifts completely off screen
+      if (!autoFollowRef.current) {
+        if (x < 0 || x > el.clientWidth) {
+          // Playhead is off screen — re-enable auto-follow after 3s of no interaction
+          if (timeSinceUserScroll > 3000) {
+            autoFollowRef.current = true;
+          }
+        }
+      }
+
+      if (autoFollowRef.current) {
+        // Scroll so playhead stays visible with comfortable margin
         if (x > el.clientWidth - 80) {
           el.scrollLeft = t * pxPerSecRef.current - el.clientWidth / 2;
         } else if (x < 0) {
@@ -305,6 +344,29 @@ export default function Timeline() {
         }
       }
     });
+  }, []);
+
+  // Scroll to show selected clip when selection changes from outside (e.g. clicking in player)
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    // Subscribe to selectedClipId changes imperatively
+    const unsub = useEditorStore.subscribe((state) => {
+      const clipId = state.selectedClipId;
+      if (!clipId) return;
+      const clip = state.project.tracks.flatMap((t) => t.clips).find((c) => c.id === clipId);
+      if (!clip) return;
+      const clipLeft = clip.startTime * pxPerSecRef.current;
+      const clipRight = (clip.startTime + clip.duration) * pxPerSecRef.current;
+      const viewLeft = el.scrollLeft;
+      const viewRight = el.scrollLeft + el.clientWidth;
+      // Scroll only if clip is out of view
+      if (clipLeft < viewLeft || clipRight > viewRight) {
+        el.scrollLeft = Math.max(0, clipLeft - 60);
+      }
+    });
+    return unsub;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Mouse wheel zoom (Ctrl/Cmd + scroll) — uses zoomRef to avoid stale closures

@@ -2,9 +2,9 @@ import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Move, Sun,
-  Droplets, ChevronDown, ChevronRight, Diamond, Type, Sliders, X
+  Droplets, ChevronDown, ChevronRight, Diamond, Type, Sliders, X, ImageIcon
 } from 'lucide-react';
-import { useEditorStore } from '../../store/editorStore';
+import { interpolateClip, useEditorStore, type Clip } from '../../store/editorStore';
 import { useShallow } from 'zustand/react/shallow';
 
 function Section({ title, icon: Icon, defaultOpen = true, children }: {
@@ -41,7 +41,7 @@ function Section({ title, icon: Icon, defaultOpen = true, children }: {
   );
 }
 
-function SliderProp({ label, value, min, max, step = 1, unit = '', onChange }: {
+function SliderProp({ label, value, min, max, step = 1, unit = '', onChange, hasKeyframes = false }: {
   label: string;
   value: number;
   min: number;
@@ -49,11 +49,17 @@ function SliderProp({ label, value, min, max, step = 1, unit = '', onChange }: {
   step?: number;
   unit?: string;
   onChange: (v: number) => void;
+  hasKeyframes?: boolean;
 }) {
   return (
     <div className="space-y-1">
       <div className="flex items-center justify-between">
-        <span className="text-[10px] text-gray-500">{label}</span>
+        <div className="flex items-center gap-1.5">
+          <span className="text-[10px] text-gray-500">{label}</span>
+          {hasKeyframes && (
+            <div className="w-2 h-2 rounded-sm rotate-45 bg-indigo-500" title="Has keyframes" />
+          )}
+        </div>
         <span className="text-[10px] font-mono text-gray-700 bg-gray-50 border border-gray-200 rounded px-1.5 py-0.5">
           {value.toFixed(step < 1 ? 2 : 0)}{unit}
         </span>
@@ -74,15 +80,19 @@ function SliderProp({ label, value, min, max, step = 1, unit = '', onChange }: {
   );
 }
 
-function NumberInput({ label, value, onChange, unit = '' }: {
+function NumberInput({ label, value, onChange, unit = '', hasKeyframes = false }: {
   label: string;
   value: number;
   onChange: (v: number) => void;
   unit?: string;
+  hasKeyframes?: boolean;
 }) {
   return (
     <div className="flex items-center gap-2">
-      <span className="text-[10px] text-gray-500 w-6">{label}</span>
+      <div className="flex items-center gap-1 w-6">
+        <span className="text-[10px] text-gray-500">{label}</span>
+        {hasKeyframes && <div className="w-1.5 h-1.5 rounded-sm rotate-45 bg-indigo-500 flex-shrink-0" />}
+      </div>
       <div className="flex-1 flex items-center border border-gray-200 rounded overflow-hidden">
         <input
           type="number"
@@ -99,8 +109,8 @@ function NumberInput({ label, value, onChange, unit = '' }: {
 // ── Keyframe row for a single property ────────────────────────────────────────
 function KeyframeRow({
   label,
-  propNames,   // which clip properties this row controls (e.g. ['x','y'] for Position)
-  currentValue, // current numeric value to record (average / representative)
+  propNames,
+  currentValue,
   clipId,
   currentTime,
 }: {
@@ -119,7 +129,6 @@ function KeyframeRow({
   const clip = project.tracks.flatMap((t) => t.clips).find((c) => c.id === clipId);
   if (!clip) return null;
 
-  // Check if ANY of the propNames have a keyframe at (or near) currentTime
   const hasKfAtTime = (prop: string) =>
     (clip.keyframes || []).some((k) => k.property === prop && Math.abs(k.time - currentTime) < 0.05);
 
@@ -131,17 +140,19 @@ function KeyframeRow({
 
   const handleToggle = () => {
     if (anyActive) {
-      // Remove keyframe(s) near currentTime for each prop
       propNames.forEach((prop) => {
         (clip.keyframes || [])
           .filter((k) => k.property === prop && Math.abs(k.time - currentTime) < 0.05)
           .forEach((k) => removeKeyframe(clipId, k.id));
       });
     } else {
-      // Add keyframe at currentTime for each prop using their current clip value
+      // Get the live (interpolated) value at currentTime for each prop
+      const interp = interpolateClip(clip, currentTime);
       propNames.forEach((prop) => {
-        const val = (clip as Record<string, unknown>)[prop];
-        addKeyframe(clipId, prop, currentTime, typeof val === 'number' ? val : currentValue);
+        const liveVal = (interp as Record<string, unknown>)[prop];
+        const baseVal = (clip as Record<string, unknown>)[prop];
+        const val = typeof liveVal === 'number' ? liveVal : (typeof baseVal === 'number' ? baseVal : currentValue);
+        addKeyframe(clipId, prop, currentTime, val);
       });
     }
   };
@@ -168,13 +179,14 @@ function KeyframeRow({
 }
 
 export default function RightPanel() {
-  // Don't subscribe to currentTime here — use getState() when needed to avoid re-renders at 15fps
-  const { selectedClipId, project, updateClip } = useEditorStore(useShallow((s) => ({
+  const { selectedClipId, project, updateClip, updateClipSpeed, addKeyframe, currentTime } = useEditorStore(useShallow((s) => ({
     selectedClipId: s.selectedClipId,
     project: s.project,
     updateClip: s.updateClip,
+    updateClipSpeed: s.updateClipSpeed,
+    addKeyframe: s.addKeyframe,
+    currentTime: s.currentTime,
   })));
-  const currentTime = useEditorStore.getState().currentTime; // read-once, not reactive
 
   const selectedClip = project.tracks.flatMap((t) => t.clips).find((c) => c.id === selectedClipId);
 
@@ -197,8 +209,23 @@ export default function RightPanel() {
     );
   }
 
+  // Get live interpolated values for display
+  const interp = interpolateClip(selectedClip, currentTime);
+  const live = { ...selectedClip, ...interp } as Clip & Record<string, unknown>;
+
+  /** Check if a property has keyframes */
+  const kf = (prop: string) => (selectedClip.keyframes || []).some((k) => k.property === prop);
+
+  /**
+   * Smart update: if the property has keyframes, write/update a keyframe at currentTime.
+   * Otherwise update the base clip value.
+   */
   const update = (key: string, value: number | string) => {
-    updateClip(selectedClip.id, { [key]: value });
+    if (typeof value === 'number' && kf(key)) {
+      addKeyframe(selectedClip.id, key, currentTime, value);
+    } else {
+      updateClip(selectedClip.id, { [key]: value });
+    }
   };
 
   const keyframeCount = (selectedClip.keyframes || []).length;
@@ -207,31 +234,68 @@ export default function RightPanel() {
     <div className="flex flex-col h-full bg-white overflow-y-auto">
       <div className="px-4 py-3 border-b border-gray-100 flex items-center gap-2 sticky top-0 bg-white z-10">
         <div className="w-2 h-2 rounded-full" style={{
-          backgroundColor: selectedClip.type === 'video' ? '#818CF8' : selectedClip.type === 'audio' ? '#34D399' : selectedClip.type === 'text' ? '#FBBF24' : '#F472B6'
+          backgroundColor: selectedClip.type === 'video' ? '#818CF8' : selectedClip.type === 'audio' ? '#34D399' : selectedClip.type === 'text' ? '#FBBF24' : selectedClip.type === 'image' ? '#22D3EE' : '#F472B6'
         }} />
-        <div>
-          <h2 className="text-[11px] font-semibold text-gray-800 truncate max-w-40">{selectedClip.name}</h2>
-          <div className="text-[10px] text-gray-400 capitalize">{selectedClip.type} clip</div>
+        <div className="flex-1 min-w-0">
+          <h2 className="text-[11px] font-semibold text-gray-800 truncate">{selectedClip.name}</h2>
+          <div className="text-[10px] text-gray-400 capitalize">{selectedClip.type} clip · {selectedClip.duration.toFixed(1)}s</div>
         </div>
+        {keyframeCount > 0 && (
+          <div className="flex items-center gap-1 bg-indigo-50 rounded px-1.5 py-0.5">
+            <Diamond size={9} className="text-indigo-500" />
+            <span className="text-[9px] text-indigo-600 font-medium">{keyframeCount}</span>
+          </div>
+        )}
       </div>
 
-      {/* Transform */}
-      {(selectedClip.type === 'video' || selectedClip.type === 'text') && (
+      {/* Transform — video, text, and image clips */}
+      {(selectedClip.type === 'video' || selectedClip.type === 'text' || selectedClip.type === 'image') && (
         <Section title="Transform" icon={Move}>
           <div className="grid grid-cols-2 gap-2">
-            <NumberInput label="X" value={selectedClip.x || 0} onChange={(v) => update('x', v)} unit="%" />
-            <NumberInput label="Y" value={selectedClip.y || 0} onChange={(v) => update('y', v)} unit="%" />
+            <NumberInput
+              label="X"
+              value={Math.round(((live.x as number) ?? 0.5) * 100) / 100}
+              onChange={(v) => update('x', Math.max(0, Math.min(1, v)))}
+              unit="n"
+              hasKeyframes={kf('x')}
+            />
+            <NumberInput
+              label="Y"
+              value={Math.round(((live.y as number) ?? 0.5) * 100) / 100}
+              onChange={(v) => update('y', Math.max(0, Math.min(1, v)))}
+              unit="n"
+              hasKeyframes={kf('y')}
+            />
           </div>
           <div className="grid grid-cols-2 gap-2">
-            <NumberInput label="W" value={(selectedClip.scaleX || 1) * 100} onChange={(v) => update('scaleX', v / 100)} unit="%" />
-            <NumberInput label="H" value={(selectedClip.scaleY || 1) * 100} onChange={(v) => update('scaleY', v / 100)} unit="%" />
+            <NumberInput
+              label="W"
+              value={Math.round(((live.scaleX as number) ?? 1) * 100)}
+              onChange={(v) => update('scaleX', v / 100)}
+              unit="%"
+              hasKeyframes={kf('scaleX')}
+            />
+            <NumberInput
+              label="H"
+              value={Math.round(((live.scaleY as number) ?? 1) * 100)}
+              onChange={(v) => update('scaleY', v / 100)}
+              unit="%"
+              hasKeyframes={kf('scaleY')}
+            />
           </div>
-          <NumberInput label="R" value={selectedClip.rotation || 0} onChange={(v) => update('rotation', v)} unit="°" />
+          <SliderProp
+            label="Rotation"
+            value={Math.round((live.rotation as number) ?? 0)}
+            min={-180} max={180} step={1} unit="°"
+            onChange={(v) => update('rotation', v)}
+            hasKeyframes={kf('rotation')}
+          />
           <SliderProp
             label="Opacity"
-            value={(selectedClip.opacity || 1) * 100}
+            value={Math.round(((live.opacity as number) ?? 1) * 100)}
             min={0} max={100} step={1} unit="%"
             onChange={(v) => update('opacity', v / 100)}
+            hasKeyframes={kf('opacity')}
           />
         </Section>
       )}
@@ -278,32 +342,75 @@ export default function RightPanel() {
         </Section>
       )}
 
-      {/* Effects */}
+      {/* Image-specific panel */}
+      {selectedClip.type === 'image' && (
+        <Section title="Image" icon={ImageIcon}>
+          <div className="flex items-center gap-2 mb-1">
+            <span className="text-[10px] text-gray-500 w-16">Blend</span>
+            <select
+              value={(selectedClip as Record<string, unknown>).blendMode as string || 'normal'}
+              onChange={(e) => update('blendMode', e.target.value)}
+              className="flex-1 text-xs px-2 py-1 border border-gray-200 rounded outline-none focus:border-indigo-400 bg-white"
+            >
+              {['normal','multiply','screen','overlay','darken','lighten','color-dodge','color-burn','hard-light','soft-light','difference','exclusion'].map(m => (
+                <option key={m} value={m}>{m.replace(/-/g, ' ')}</option>
+              ))}
+            </select>
+          </div>
+        </Section>
+      )}
+
+      {/* Speed & Reverse — video clips only */}
       {selectedClip.type === 'video' && (
+        <Section title="Playback" icon={Sun}>
+          <SliderProp
+            label="Speed"
+            value={Math.round(((live.speed as number) ?? 1) * 100) / 100}
+            min={0.25} max={2} step={0.25} unit="x"
+            onChange={(v) => updateClipSpeed(selectedClip.id, v)}
+          />
+          <div className="flex items-center justify-between mt-1.5">
+            <span className="text-[11px] text-gray-600">Reverse</span>
+            <button
+              onClick={() => updateClip(selectedClip.id, { reverse: !(selectedClip.reverse ?? false) })}
+              className={`relative w-9 h-5 rounded-full transition-colors ${selectedClip.reverse ? 'bg-indigo-500' : 'bg-gray-200'}`}
+            >
+              <span className={`absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform ${selectedClip.reverse ? 'translate-x-4' : 'translate-x-0.5'}`} />
+            </button>
+          </div>
+        </Section>
+      )}
+
+      {/* Adjustments — video and image clips */}
+      {(selectedClip.type === 'video' || selectedClip.type === 'image') && (
         <Section title="Adjustments" icon={Sun}>
-          <SliderProp label="Brightness" value={selectedClip.brightness ?? 100} min={0} max={200} step={1} unit="%" onChange={(v) => update('brightness', v)} />
-          <SliderProp label="Contrast"   value={selectedClip.contrast   ?? 100} min={0} max={200} step={1} unit="%" onChange={(v) => update('contrast',   v)} />
-          <SliderProp label="Saturation" value={selectedClip.saturation ?? 100} min={0} max={200} step={1} unit="%" onChange={(v) => update('saturation', v)} />
-          <SliderProp label="Blur"       value={selectedClip.blur       ??   0} min={0} max={20}  step={0.5} unit="px" onChange={(v) => update('blur', v)} />
+          <SliderProp label="Brightness" value={(live.brightness as number) ?? 100} min={0} max={200} step={1} unit="%" onChange={(v) => update('brightness', v)} hasKeyframes={kf('brightness')} />
+          <SliderProp label="Contrast"   value={(live.contrast   as number) ?? 100} min={0} max={200} step={1} unit="%" onChange={(v) => update('contrast',   v)} hasKeyframes={kf('contrast')} />
+          <SliderProp label="Saturation" value={(live.saturation as number) ?? 100} min={0} max={200} step={1} unit="%" onChange={(v) => update('saturation', v)} hasKeyframes={kf('saturation')} />
+          <SliderProp label="Blur"       value={(live.blur       as number) ??   0} min={0} max={20}  step={0.5} unit="px" onChange={(v) => update('blur', v)} hasKeyframes={kf('blur')} />
         </Section>
       )}
 
       {/* Audio */}
       {selectedClip.type === 'audio' && (
         <Section title="Audio" icon={Droplets}>
-          <SliderProp label="Volume" value={(selectedClip.volume ?? 1) * 100} min={0} max={200} step={1} unit="%" onChange={(v) => update('volume', v / 100)} />
+          <SliderProp label="Volume" value={((live.volume as number) ?? 1) * 100} min={0} max={200} step={1} unit="%" onChange={(v) => update('volume', v / 100)} />
           <div className="text-[10px] text-gray-500 mt-1">Fade In / Out coming soon</div>
         </Section>
       )}
 
-      {/* Keyframes — only for video/text clips that can be animated */}
-      {(selectedClip.type === 'video' || selectedClip.type === 'text') && (
-        <Section title="Keyframes" icon={Diamond} defaultOpen={false}>
+      {/* Keyframes — video, text, and image clips */}
+      {(selectedClip.type === 'video' || selectedClip.type === 'text' || selectedClip.type === 'image') && (
+        <Section title="Keyframes" icon={Diamond} defaultOpen={keyframeCount > 0}>
           <div className="text-[10px] text-gray-400 mb-2">
             Playhead @ <span className="font-mono text-indigo-600">{currentTime.toFixed(2)}s</span>
             {keyframeCount > 0 && (
               <span className="ml-2 text-gray-500">· {keyframeCount} total</span>
             )}
+          </div>
+
+          <div className="mb-2 p-2 bg-blue-50 rounded text-[10px] text-blue-600 border border-blue-100">
+            ◆ = add keyframe at playhead. Sliders auto-write keyframes when enabled.
           </div>
 
           <div className="space-y-1.5">
@@ -335,19 +442,51 @@ export default function RightPanel() {
               clipId={selectedClip.id}
               currentTime={currentTime}
             />
+            {(selectedClip.type === 'video' || selectedClip.type === 'image') && (
+              <>
+                <KeyframeRow
+                  label="Brightness"
+                  propNames={['brightness']}
+                  currentValue={selectedClip.brightness ?? 100}
+                  clipId={selectedClip.id}
+                  currentTime={currentTime}
+                />
+                <KeyframeRow
+                  label="Contrast"
+                  propNames={['contrast']}
+                  currentValue={selectedClip.contrast ?? 100}
+                  clipId={selectedClip.id}
+                  currentTime={currentTime}
+                />
+                <KeyframeRow
+                  label="Saturation"
+                  propNames={['saturation']}
+                  currentValue={selectedClip.saturation ?? 100}
+                  clipId={selectedClip.id}
+                  currentTime={currentTime}
+                />
+                <KeyframeRow
+                  label="Blur"
+                  propNames={['blur']}
+                  currentValue={selectedClip.blur ?? 0}
+                  clipId={selectedClip.id}
+                  currentTime={currentTime}
+                />
+              </>
+            )}
           </div>
 
           {/* List existing keyframes with remove button */}
           {keyframeCount > 0 && (
             <div className="mt-3 space-y-1">
               <div className="text-[10px] text-gray-500 font-medium mb-1">All keyframes</div>
-              {(selectedClip.keyframes || []).map((kf) => (
-                <div key={kf.id} className="flex items-center justify-between text-[10px] bg-gray-50 rounded px-2 py-1">
-                  <span className="font-mono text-indigo-600">{kf.time.toFixed(2)}s</span>
-                  <span className="text-gray-500 mx-2">{kf.property}</span>
-                  <span className="font-mono text-gray-700 flex-1">{typeof kf.value === 'number' ? kf.value.toFixed(3) : kf.value}</span>
+              {(selectedClip.keyframes || []).map((kfItem) => (
+                <div key={kfItem.id} className="flex items-center justify-between text-[10px] bg-gray-50 rounded px-2 py-1">
+                  <span className="font-mono text-indigo-600">{kfItem.time.toFixed(2)}s</span>
+                  <span className="text-gray-500 mx-2">{kfItem.property}</span>
+                  <span className="font-mono text-gray-700 flex-1">{typeof kfItem.value === 'number' ? kfItem.value.toFixed(3) : kfItem.value}</span>
                   <button
-                    onClick={() => useEditorStore.getState().removeKeyframe(selectedClip.id, kf.id)}
+                    onClick={() => useEditorStore.getState().removeKeyframe(selectedClip.id, kfItem.id)}
                     className="text-gray-300 hover:text-red-400 transition-colors ml-1"
                   >
                     <X size={10} />
@@ -356,10 +495,6 @@ export default function RightPanel() {
               ))}
             </div>
           )}
-
-          <div className="mt-2 p-2 bg-gray-50 rounded text-[10px] text-gray-500 text-center">
-            Click ◆ to add/remove keyframe at playhead
-          </div>
         </Section>
       )}
     </div>

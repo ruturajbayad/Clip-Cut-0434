@@ -296,6 +296,35 @@ export const ClipBlock = memo(function ClipBlock({
             </div>
           )}
 
+          {/* Keyframe diamond markers — shown as small ◆ icons along the clip */}
+          {clip.keyframes && clip.keyframes.length > 0 && (
+            <div className="absolute inset-0 pointer-events-none z-20 overflow-hidden">
+              {clip.keyframes.map((kf) => {
+                const relTime = kf.time - clip.startTime;
+                const xPos = (relTime / clip.duration) * 100;
+                if (xPos < 0 || xPos > 100) return null;
+                return (
+                  <div
+                    key={kf.id}
+                    className="absolute -translate-x-1/2"
+                    style={{
+                      left: `${xPos}%`,
+                      top: '50%',
+                      transform: 'translate(-50%, -50%)',
+                      width: 6,
+                      height: 6,
+                      background: '#6366f1',
+                      borderRadius: 1,
+                      rotate: '45deg',
+                      opacity: 0.85,
+                      boxShadow: '0 0 0 1px rgba(255,255,255,0.8)',
+                    }}
+                  />
+                );
+              })}
+            </div>
+          )}
+
           {/* Visual transition wedge */}
           {clip.transition && (
             <div

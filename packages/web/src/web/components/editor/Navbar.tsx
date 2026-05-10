@@ -31,7 +31,7 @@ export default function Navbar() {
           <div className="w-7 h-7 bg-indigo-600 rounded-lg flex items-center justify-center">
             <Film size={14} className="text-white" />
           </div>
-          <span className="font-semibold text-gray-900 text-sm">FrameForge</span>
+          <span className="font-semibold text-gray-900 text-sm">CutCraft</span>
         </div>
         <div className="w-px h-4 bg-gray-200" />
         {editingName ? (

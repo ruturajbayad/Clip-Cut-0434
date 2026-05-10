@@ -50,8 +50,13 @@ export interface Clip {
   fontFamily?: string;
   color?: string;
   effect?: string;
+  filterCss?: string; // raw CSS filter string from filter presets
   transition?: string;
   trimStart?: number; // seconds offset into the source file (for split clips)
+  speed?: number;          // playback rate multiplier (default 1)
+  reverse?: boolean;       // play clip in reverse
+  sourceDuration?: number; // original unmodified duration (before speed changes)
+  blendMode?: string;      // CSS mix-blend-mode for image clips
 }
 
 export interface Track {
@@ -182,10 +187,12 @@ interface EditorState {
   addClipFromMedia: (media: MediaItem, trackType?: TrackType) => void;
   removeClip: (clipId: string) => void;
   updateClip: (clipId: string, updates: Partial<Clip>) => void;
+  updateClipSpeed: (clipId: string, speed: number) => void;
   moveClip: (clipId: string, newTrackId: string, newStartTime: number) => void;
   splitClip: (clipId: string, atTime: number) => void;
   updateProject: (updates: Partial<Project>) => void;
   recomputeDuration: () => void;
+  reorderTrack: (trackId: string, direction: 'up' | 'down') => void;
   undo: () => void;
   redo: () => void;
   saveToUndo: () => void;
@@ -222,9 +229,9 @@ const makeDefaultTracks = (): Track[] => {
       visible: true,
       height: 56,
       clips: [
-        { id: nanoid(), trackId: v1id, name: 'Clip 01.mp4', type: 'video', startTime: 0,  duration: 8,  thumbnailColor: '#818CF8', opacity: 1, x: 0.5, y: 0.5, scaleX: 1, scaleY: 1, trimStart: 0,  src: DEFAULT_VIDEO_SRC, mediaId: DEFAULT_VIDEO_MEDIA_ID },
-        { id: nanoid(), trackId: v1id, name: 'Clip 02.mp4', type: 'video', startTime: 8,  duration: 8,  thumbnailColor: '#6366F1', opacity: 1, x: 0.5, y: 0.5, scaleX: 1, scaleY: 1, trimStart: 8,  src: DEFAULT_VIDEO_SRC, mediaId: DEFAULT_VIDEO_MEDIA_ID },
-        { id: nanoid(), trackId: v1id, name: 'Clip 03.mp4', type: 'video', startTime: 16, duration: 7,  thumbnailColor: '#818CF8', opacity: 1, x: 0.5, y: 0.5, scaleX: 1, scaleY: 1, trimStart: 16, src: DEFAULT_VIDEO_SRC, mediaId: DEFAULT_VIDEO_MEDIA_ID },
+        { id: nanoid(), trackId: v1id, name: 'Clip 01.mp4', type: 'video', startTime: 0,  duration: 8,  sourceDuration: 8,  speed: 1, thumbnailColor: '#818CF8', opacity: 1, x: 0.5, y: 0.5, scaleX: 1, scaleY: 1, trimStart: 0,  src: DEFAULT_VIDEO_SRC, mediaId: DEFAULT_VIDEO_MEDIA_ID },
+        { id: nanoid(), trackId: v1id, name: 'Clip 02.mp4', type: 'video', startTime: 8,  duration: 8,  sourceDuration: 8,  speed: 1, thumbnailColor: '#6366F1', opacity: 1, x: 0.5, y: 0.5, scaleX: 1, scaleY: 1, trimStart: 8,  src: DEFAULT_VIDEO_SRC, mediaId: DEFAULT_VIDEO_MEDIA_ID },
+        { id: nanoid(), trackId: v1id, name: 'Clip 03.mp4', type: 'video', startTime: 16, duration: 7,  sourceDuration: 7,  speed: 1, thumbnailColor: '#818CF8', opacity: 1, x: 0.5, y: 0.5, scaleX: 1, scaleY: 1, trimStart: 16, src: DEFAULT_VIDEO_SRC, mediaId: DEFAULT_VIDEO_MEDIA_ID },
       ],
     },
     {
@@ -339,6 +346,19 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     });
   },
 
+  reorderTrack: (trackId, direction) => {
+    get().saveToUndo();
+    set((state) => {
+      const tracks = [...state.project.tracks];
+      const idx = tracks.findIndex((t) => t.id === trackId);
+      if (idx === -1) return {};
+      const newIdx = direction === 'up' ? idx - 1 : idx + 1;
+      if (newIdx < 0 || newIdx >= tracks.length) return {};
+      [tracks[idx], tracks[newIdx]] = [tracks[newIdx], tracks[idx]];
+      return { project: { ...state.project, tracks } };
+    });
+  },
+
   addClip: (trackId, clip) => {
     get().saveToUndo();
     const newClip: Clip = {
@@ -404,13 +424,15 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     // Image overlays default to 40% canvas size, centered; full video fills canvas
     const isImageOverlay = type === 'image';
 
+    const clipSourceDur = media.duration || 5;
     const newClip: Clip = {
       id: nanoid(),
       trackId: track.id,
       name: media.name,
       type,
       startTime: endTime,
-      duration: media.duration || 5,
+      duration: clipSourceDur,
+      sourceDuration: clipSourceDur,
       src: media.src,
       mediaId: media.id,
       thumbnailColor: media.thumbnailColor || '#818CF8',
@@ -420,6 +442,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       scaleX: isImageOverlay ? 0.4 : 1,
       scaleY: isImageOverlay ? 0.4 : 1,
       trimStart: 0,
+      speed: 1,
     };
 
     newTracks = newTracks.map((t) =>
@@ -452,6 +475,54 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         ...t,
         clips: t.clips.map((c) => (c.id === clipId ? { ...c, ...updates } : c)),
       }));
+      return { project: { ...state.project, tracks: newTracks, duration: computeDuration(newTracks) } };
+    });
+  },
+
+  /**
+   * Change clip speed and:
+   *  1. Update clip.duration = sourceDuration / speed (so the timeline block shrinks/grows)
+   *  2. Push/pull subsequent clips on the same track so they don't overlap / leave gaps
+   */
+  updateClipSpeed: (clipId, speed) => {
+    get().saveToUndo();
+    set((state) => {
+      const safeSpeed = Math.max(0.0625, Math.min(16, speed));
+      const newTracks = state.project.tracks.map((track) => {
+        const clipIdx = track.clips.findIndex((c) => c.id === clipId);
+        if (clipIdx === -1) return track;
+
+        const clip = track.clips[clipIdx];
+        // sourceDuration is set when clip is created (= original media duration).
+        // If not set yet, treat current duration*currentSpeed as the source duration.
+        const currentSpeed = clip.speed ?? 1;
+        const srcDur = clip.sourceDuration ?? (clip.duration * currentSpeed);
+        const newDuration = srcDur / safeSpeed;
+        const oldDuration = clip.duration;
+        const delta = newDuration - oldDuration;
+
+        // Update this clip
+        const updatedClip: Clip = {
+          ...clip,
+          speed: safeSpeed,
+          duration: newDuration,
+          sourceDuration: srcDur,
+        };
+
+        // Push subsequent clips (those that start at or after the end of this clip)
+        const clipEnd = clip.startTime + oldDuration;
+        const newClips = track.clips.map((c, i) => {
+          if (i === clipIdx) return updatedClip;
+          // Only push clips that START at or after the current clip's end (same-track)
+          if (c.startTime >= clipEnd) {
+            return { ...c, startTime: Math.max(0, c.startTime + delta) };
+          }
+          return c;
+        });
+
+        return { ...track, clips: newClips };
+      });
+
       return { project: { ...state.project, tracks: newTracks, duration: computeDuration(newTracks) } };
     });
   },

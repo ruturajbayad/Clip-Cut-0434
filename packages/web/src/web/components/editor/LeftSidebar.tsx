@@ -4,7 +4,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
   Video, Type, Music, Sparkles, ArrowLeftRight, Sticker,
   SlidersHorizontal, LayoutTemplate, Search, Plus, Upload,
-  ImageIcon, Grid3X3, Loader2, Film, X
+  ImageIcon, Grid3X3, Loader2, Film, X, ChevronUp, ChevronDown, Layers
 } from 'lucide-react';
 import { useEditorStore, type MediaItem } from '../../store/editorStore';
 import type { ActivePanel } from '../../store/editorStore';
@@ -21,12 +21,18 @@ const TABS: { id: ActivePanel; icon: React.ComponentType<{ size?: number; classN
 ];
 
 const TEXT_PRESETS = [
-  { id: 'cinematic', label: 'Cinematic Title', style: 'text-lg font-bold tracking-widest uppercase', color: 'text-gray-900' },
-  { id: 'vlog', label: 'Vlog Style', style: 'text-xl font-bold italic', color: 'text-indigo-600' },
-  { id: 'gaming', label: 'Gaming', style: 'text-xl font-black uppercase', color: 'text-yellow-500' },
-  { id: 'minimal', label: 'Minimal', style: 'text-sm font-light tracking-widest', color: 'text-gray-600' },
-  { id: 'neon', label: 'Neon Glow', style: 'text-xl font-bold', color: 'text-purple-500' },
-  { id: 'subtitle', label: 'Subtitle', style: 'text-sm font-medium', color: 'text-gray-800' },
+  { id: 'cinematic', label: 'Cinematic Title', previewStyle: 'text-lg font-bold tracking-widest uppercase', previewColor: 'text-gray-900',
+    fontSize: 96, fontFamily: 'Inter', color: '#FFFFFF', text: 'CINEMATIC TITLE' },
+  { id: 'vlog', label: 'Vlog Style', previewStyle: 'text-xl font-bold italic', previewColor: 'text-indigo-600',
+    fontSize: 72, fontFamily: 'Inter', color: '#818CF8', text: 'Vlog Title' },
+  { id: 'gaming', label: 'Gaming', previewStyle: 'text-xl font-black uppercase', previewColor: 'text-yellow-500',
+    fontSize: 80, fontFamily: 'Space Grotesk', color: '#FBBF24', text: 'GAME ON' },
+  { id: 'minimal', label: 'Minimal', previewStyle: 'text-sm font-light tracking-widest', previewColor: 'text-gray-600',
+    fontSize: 36, fontFamily: 'Raleway', color: '#CCCCCC', text: 'minimal text' },
+  { id: 'neon', label: 'Neon Glow', previewStyle: 'text-xl font-bold', previewColor: 'text-purple-500',
+    fontSize: 72, fontFamily: 'Space Grotesk', color: '#C084FC', text: 'NEON GLOW' },
+  { id: 'subtitle', label: 'Subtitle', previewStyle: 'text-sm font-medium', previewColor: 'text-gray-800',
+    fontSize: 40, fontFamily: 'Inter', color: '#FFFFFF', text: 'Subtitle text here' },
 ];
 
 const EFFECT_ITEMS = [
@@ -112,7 +118,7 @@ function getVideoThumbnail(file: File): Promise<string> {
   });
 }
 
-function MediaCard({ item, onAdd }: { item: MediaItem; onAdd: () => void }) {
+function MediaCard({ item, onAdd, onAddOverlay }: { item: MediaItem; onAdd: () => void; onAddOverlay?: () => void }) {
   const fmt = (d?: number) => {
     if (!d) return '';
     const m = Math.floor(d / 60);
@@ -149,14 +155,55 @@ function MediaCard({ item, onAdd }: { item: MediaItem; onAdd: () => void }) {
         <div className="text-[10px] font-medium text-gray-700 truncate">{item.name}</div>
         <div className="text-[9px] text-gray-400 capitalize">{item.type}</div>
       </div>
-      {/* Add overlay */}
-      <div className="absolute inset-0 bg-indigo-600/0 group-hover:bg-indigo-600/5 transition-all flex items-center justify-center opacity-0 group-hover:opacity-100">
+      {/* Add overlay — appears on hover */}
+      <div className="absolute inset-0 bg-indigo-600/0 group-hover:bg-indigo-600/5 transition-all flex items-end justify-center opacity-0 group-hover:opacity-100 pb-2 gap-1.5">
         <button
           onClick={(e) => { e.stopPropagation(); onAdd(); }}
-          className="w-7 h-7 bg-indigo-600 rounded-full flex items-center justify-center shadow-lg hover:bg-indigo-700 transition-colors"
-          title="Add to timeline"
+          className="flex items-center gap-1 px-2 py-1 bg-indigo-600 rounded-full shadow-lg hover:bg-indigo-700 transition-colors text-white text-[9px] font-medium"
+          title="Add to main track"
         >
-          <Plus size={12} className="text-white" />
+          <Plus size={10} /> Main
+        </button>
+        {onAddOverlay && (
+          <button
+            onClick={(e) => { e.stopPropagation(); onAddOverlay(); }}
+            className="flex items-center gap-1 px-2 py-1 bg-purple-600 rounded-full shadow-lg hover:bg-purple-700 transition-colors text-white text-[9px] font-medium"
+            title="Add as PIP overlay on new track"
+          >
+            <Grid3X3 size={10} /> PIP
+          </button>
+        )}
+      </div>
+    </motion.div>
+  );
+}
+
+function ImageCard({ item, onAdd }: { item: MediaItem; onAdd: () => void }) {
+  return (
+    <motion.div
+      whileHover={{ scale: 1.02 }}
+      whileTap={{ scale: 0.97 }}
+      className="group relative rounded-lg overflow-hidden cursor-pointer border border-gray-100 hover:border-pink-300 hover:shadow-md transition-all bg-white"
+    >
+      <div className="aspect-square relative overflow-hidden bg-gray-100">
+        {item.thumbnail ? (
+          <img src={item.thumbnail} alt={item.name} className="w-full h-full object-cover" />
+        ) : (
+          <div className="w-full h-full flex items-center justify-center" style={{ backgroundColor: (item.thumbnailColor || '#F472B6') + '22' }}>
+            <ImageIcon size={18} className="text-gray-400 opacity-60" />
+          </div>
+        )}
+      </div>
+      <div className="p-1.5">
+        <div className="text-[10px] font-medium text-gray-700 truncate">{item.name}</div>
+      </div>
+      <div className="absolute inset-0 bg-pink-600/0 group-hover:bg-pink-600/5 transition-all flex items-center justify-center opacity-0 group-hover:opacity-100">
+        <button
+          onClick={(e) => { e.stopPropagation(); onAdd(); }}
+          className="flex items-center gap-1 px-2.5 py-1 bg-pink-600 rounded-full shadow-lg hover:bg-pink-700 transition-colors text-white text-[9px] font-medium"
+          title="Add as image layer"
+        >
+          <Plus size={10} /> Add Layer
         </button>
       </div>
     </motion.div>
@@ -164,15 +211,44 @@ function MediaCard({ item, onAdd }: { item: MediaItem; onAdd: () => void }) {
 }
 
 export default function LeftSidebar() {
-  const { activePanel, setActivePanel, mediaLibrary, addMediaItem, addClipFromMedia, addClip, project } = useEditorStore(useShallow((s) => ({
+  const { activePanel, setActivePanel, mediaLibrary, addMediaItem, addClipFromMedia, addClip, addTrack, project, selectedClipId, updateClip, reorderTrack } = useEditorStore(useShallow((s) => ({
     activePanel: s.activePanel,
     setActivePanel: s.setActivePanel,
     mediaLibrary: s.mediaLibrary,
     addMediaItem: s.addMediaItem,
     addClipFromMedia: s.addClipFromMedia,
     addClip: s.addClip,
+    addTrack: s.addTrack,
     project: s.project,
+    selectedClipId: s.selectedClipId,
+    updateClip: s.updateClip,
+    reorderTrack: s.reorderTrack,
   })));
+
+  /** Add a video clip as a PIP overlay on a fresh video track */
+  const addAsOverlay = useCallback((item: MediaItem) => {
+    // Create a new video track, then add the clip to it
+    addTrack('video');
+    // After addTrack, the new track is the last video track
+    const state = useEditorStore.getState();
+    const videoTracks = state.project.tracks.filter((t) => t.type === 'video');
+    const overlayTrack = videoTracks[videoTracks.length - 1];
+    if (overlayTrack) {
+      addClip(overlayTrack.id, {
+        name: item.name,
+        type: 'video',
+        startTime: state.currentTime,
+        duration: item.duration || 5,
+        src: item.src,
+        mediaId: item.id,
+        thumbnailColor: item.thumbnailColor || '#818CF8',
+        opacity: 1,
+        x: 0.5, y: 0.5,
+        scaleX: 0.45, scaleY: 0.45,
+        trimStart: 0,
+      });
+    }
+  }, [addTrack, addClip]);
   const [search, setSearch] = useState('');
   const [uploading, setUploading] = useState(false);
   const [dragOver, setDragOver] = useState(false);
@@ -230,20 +306,20 @@ export default function LeftSidebar() {
     if (e.dataTransfer.files.length) handleFiles(e.dataTransfer.files);
   }, [handleFiles]);
 
-  const handleAddText = () => {
+  const handleAddText = (preset?: typeof TEXT_PRESETS[0]) => {
     const textTrack = project.tracks.find(t => t.type === 'text');
     if (textTrack) {
       const endTime = textTrack.clips.reduce((m, c) => Math.max(m, c.startTime + c.duration), 0);
       addClip(textTrack.id, {
-        name: 'New Text',
+        name: preset ? preset.label : 'New Text',
         type: 'text',
         startTime: endTime,
         duration: 4,
         thumbnailColor: '#FBBF24',
-        text: 'Your Text Here',
-        fontSize: 72,
-        fontFamily: 'Inter',
-        color: '#FFFFFF',
+        text: preset ? preset.text : 'Your Text Here',
+        fontSize: preset ? preset.fontSize : 72,
+        fontFamily: preset ? preset.fontFamily : 'Inter',
+        color: preset ? preset.color : '#FFFFFF',
       });
     }
   };
@@ -307,6 +383,49 @@ export default function LeftSidebar() {
             {/* ── MEDIA ── */}
             {activePanel === 'media' && (
               <div className="space-y-3">
+                {/* Layer order control — shown when an overlay clip is selected */}
+                {(() => {
+                  if (!selectedClipId) return null;
+                  const allClips = project.tracks.flatMap(t => t.clips);
+                  const selClip = allClips.find(c => c.id === selectedClipId);
+                  if (!selClip) return null;
+                  const trackIdx = project.tracks.findIndex(t => t.id === selClip.trackId);
+                  if (trackIdx < 0) return null;
+                  const track = project.tracks[trackIdx];
+                  // Only show for video/image overlay tracks (not the first video track)
+                  const firstVideoTrackIdx = project.tracks.findIndex(t => t.type === 'video');
+                  if (trackIdx === firstVideoTrackIdx && track.type === 'video') return null;
+                  const canUp = trackIdx < project.tracks.length - 1;
+                  const canDown = trackIdx > 0;
+                  return (
+                    <div className="bg-indigo-50 border border-indigo-200 rounded-xl p-2.5">
+                      <div className="flex items-center gap-1.5 mb-2">
+                        <Layers size={12} className="text-indigo-500" />
+                        <span className="text-[10px] font-semibold text-indigo-700">Layer Order</span>
+                        <span className="text-[9px] text-indigo-400 ml-auto">Layer {trackIdx + 1} of {project.tracks.length}</span>
+                      </div>
+                      <div className="flex gap-1.5">
+                        <button
+                          onClick={() => reorderTrack(track.id, 'up')}
+                          disabled={!canUp}
+                          className="flex-1 flex items-center justify-center gap-1 py-1 rounded-lg text-[10px] font-medium transition-all disabled:opacity-30 disabled:cursor-not-allowed bg-white border border-indigo-200 hover:bg-indigo-100 text-indigo-700"
+                          title="Move layer up (closer to front)"
+                        >
+                          <ChevronUp size={12} /> Front
+                        </button>
+                        <button
+                          onClick={() => reorderTrack(track.id, 'down')}
+                          disabled={!canDown}
+                          className="flex-1 flex items-center justify-center gap-1 py-1 rounded-lg text-[10px] font-medium transition-all disabled:opacity-30 disabled:cursor-not-allowed bg-white border border-indigo-200 hover:bg-indigo-100 text-indigo-700"
+                          title="Move layer down (closer to back)"
+                        >
+                          <ChevronDown size={12} /> Back
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })()}
+
                 {/* Upload drop zone */}
                 <div
                   onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
@@ -332,17 +451,38 @@ export default function LeftSidebar() {
                   onChange={(e) => e.target.files && handleFiles(e.target.files)}
                 />
 
-                {/* Library */}
-                {mediaLibrary.length > 0 && (
+                {/* Video Library */}
+                {mediaLibrary.filter(m => m.type === 'video').length > 0 && (
                   <>
-                    <div className="flex items-center justify-between">
-                      <span className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide">Your Media ({mediaLibrary.length})</span>
+                    <div className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide flex items-center gap-1">
+                      <Film size={10} /> Videos ({mediaLibrary.filter(m => m.type === 'video').length})
                     </div>
                     <div className="grid grid-cols-2 gap-2">
                       {mediaLibrary
-                        .filter(m => m.name.toLowerCase().includes(search.toLowerCase()))
+                        .filter(m => m.type === 'video' && m.name.toLowerCase().includes(search.toLowerCase()))
                         .map((item) => (
                           <MediaCard
+                            key={item.id}
+                            item={item}
+                            onAdd={() => addClipFromMedia(item)}
+                            onAddOverlay={() => addAsOverlay(item)}
+                          />
+                        ))}
+                    </div>
+                  </>
+                )}
+
+                {/* Image Library */}
+                {mediaLibrary.filter(m => m.type === 'image').length > 0 && (
+                  <>
+                    <div className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide flex items-center gap-1 mt-1">
+                      <ImageIcon size={10} /> Images ({mediaLibrary.filter(m => m.type === 'image').length})
+                    </div>
+                    <div className="grid grid-cols-3 gap-1.5">
+                      {mediaLibrary
+                        .filter(m => m.type === 'image' && m.name.toLowerCase().includes(search.toLowerCase()))
+                        .map((item) => (
+                          <ImageCard
                             key={item.id}
                             item={item}
                             onAdd={() => addClipFromMedia(item)}
@@ -379,10 +519,11 @@ export default function LeftSidebar() {
                     key={preset.id}
                     whileHover={{ scale: 1.01 }}
                     whileTap={{ scale: 0.98 }}
-                    onClick={handleAddText}
+                    onClick={() => handleAddText(preset)}
                     className="border border-gray-100 hover:border-indigo-200 hover:bg-indigo-50/50 rounded-xl p-3 cursor-pointer transition-all"
                   >
-                    <div className={`${preset.style} ${preset.color} leading-tight`}>{preset.label}</div>
+                    <div className={`${preset.previewStyle} ${preset.previewColor} leading-tight`}>{preset.label}</div>
+                    <div className="text-[9px] text-gray-400 mt-0.5">{preset.fontFamily} · {preset.fontSize}px</div>
                   </motion.div>
                 ))}
               </div>
@@ -436,22 +577,50 @@ export default function LeftSidebar() {
 
             {/* ── EFFECTS ── */}
             {activePanel === 'effects' && (
-              <div className="grid grid-cols-2 gap-2">
-                {EFFECT_ITEMS.filter(e => e.name.toLowerCase().includes(search.toLowerCase())).map((effect) => (
-                  <motion.div
-                    key={effect.id}
-                    whileHover={{ scale: 1.04 }}
-                    whileTap={{ scale: 0.96 }}
-                    className="rounded-xl overflow-hidden border border-gray-100 hover:border-indigo-300 hover:shadow-md cursor-grab transition-all"
-                  >
-                    <div className="h-14 flex items-center justify-center" style={{ backgroundColor: effect.color }}>
-                      <Sparkles size={18} className="text-gray-600 opacity-60" />
-                    </div>
-                    <div className="p-1.5 bg-white">
-                      <div className="text-[10px] font-medium text-gray-700 text-center">{effect.name}</div>
-                    </div>
-                  </motion.div>
-                ))}
+              <div className="space-y-2">
+                {!selectedClipId && (
+                  <div className="text-[10px] text-amber-600 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                    Select a video or image clip first to apply effects.
+                  </div>
+                )}
+                <div className="grid grid-cols-2 gap-2">
+                  {EFFECT_ITEMS.filter(e => e.name.toLowerCase().includes(search.toLowerCase())).map((effect) => {
+                    // Check if this effect is active on selected clip
+                    const selectedClip = selectedClipId
+                      ? project.tracks.flatMap(t => t.clips).find(c => c.id === selectedClipId)
+                      : null;
+                    const isActive = selectedClip?.effect === effect.id;
+                    return (
+                      <motion.div
+                        key={effect.id}
+                        whileHover={{ scale: 1.04 }}
+                        whileTap={{ scale: 0.96 }}
+                        onClick={() => {
+                          if (selectedClipId) {
+                            // Toggle off if already active
+                            updateClip(selectedClipId, {
+                              effect: isActive ? undefined : effect.id,
+                              filterCss: undefined,
+                            });
+                          }
+                        }}
+                        className={`rounded-xl overflow-hidden border hover:shadow-md cursor-pointer transition-all ${
+                          isActive ? 'border-indigo-500 ring-2 ring-indigo-400' : 'border-gray-100 hover:border-indigo-300'
+                        }`}
+                      >
+                        <div className="h-14 flex items-center justify-center relative" style={{ backgroundColor: effect.color }}>
+                          <Sparkles size={18} className="text-gray-600 opacity-60" />
+                          {isActive && (
+                            <div className="absolute top-1 right-1 w-3 h-3 bg-indigo-500 rounded-full" />
+                          )}
+                        </div>
+                        <div className="p-1.5 bg-white">
+                          <div className="text-[10px] font-medium text-gray-700 text-center">{effect.name}</div>
+                        </div>
+                      </motion.div>
+                    );
+                  })}
+                </div>
               </div>
             )}
 
@@ -479,20 +648,49 @@ export default function LeftSidebar() {
 
             {/* ── FILTERS ── */}
             {activePanel === 'filters' && (
-              <div className="grid grid-cols-2 gap-2">
-                {FILTER_ITEMS.filter(f => f.name.toLowerCase().includes(search.toLowerCase())).map((filter) => (
-                  <motion.div
-                    key={filter.id}
-                    whileHover={{ scale: 1.04 }}
-                    whileTap={{ scale: 0.96 }}
-                    className="rounded-xl border border-gray-100 hover:border-indigo-300 hover:shadow-md cursor-grab overflow-hidden transition-all"
-                  >
-                    <div className="h-14 bg-gradient-to-br from-purple-100 to-indigo-100" style={{ filter: filter.css || 'none' }} />
-                    <div className="p-1.5 bg-white text-center">
-                      <div className="text-[10px] font-medium text-gray-700">{filter.name}</div>
-                    </div>
-                  </motion.div>
-                ))}
+              <div className="space-y-2">
+                {!selectedClipId && (
+                  <div className="text-[10px] text-amber-600 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                    Select a video or image clip first to apply a filter.
+                  </div>
+                )}
+                <div className="grid grid-cols-2 gap-2">
+                  {FILTER_ITEMS.filter(f => f.name.toLowerCase().includes(search.toLowerCase())).map((filter) => {
+                    const selectedClip = selectedClipId
+                      ? project.tracks.flatMap(t => t.clips).find(c => c.id === selectedClipId)
+                      : null;
+                    const isActive = filter.id === 'none'
+                      ? !selectedClip?.filterCss && !selectedClip?.effect
+                      : selectedClip?.filterCss === filter.css;
+                    return (
+                      <motion.div
+                        key={filter.id}
+                        whileHover={{ scale: 1.04 }}
+                        whileTap={{ scale: 0.96 }}
+                        onClick={() => {
+                          if (selectedClipId) {
+                            updateClip(selectedClipId, {
+                              filterCss: filter.id === 'none' ? undefined : filter.css,
+                              effect: undefined,
+                            });
+                          }
+                        }}
+                        className={`rounded-xl border hover:shadow-md cursor-pointer overflow-hidden transition-all ${
+                          isActive ? 'border-indigo-500 ring-2 ring-indigo-400' : 'border-gray-100 hover:border-indigo-300'
+                        }`}
+                      >
+                        <div className="h-14 bg-gradient-to-br from-purple-100 to-indigo-100 relative" style={{ filter: filter.css || 'none' }}>
+                          {isActive && (
+                            <div className="absolute top-1 right-1 w-3 h-3 bg-indigo-500 rounded-full" />
+                          )}
+                        </div>
+                        <div className="p-1.5 bg-white text-center">
+                          <div className="text-[10px] font-medium text-gray-700">{filter.name}</div>
+                        </div>
+                      </motion.div>
+                    );
+                  })}
+                </div>
               </div>
             )}
 
