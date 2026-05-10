@@ -285,7 +285,7 @@ export default function PreviewCanvas() {
               onClick={() => setAspectRatio(ar)}
               className={`text-[10px] font-medium px-2 py-1 rounded transition-colors ${
                 aspectRatio.label === ar.label
-                  ? 'bg-indigo-100 text-indigo-700'
+                  ? 'bg-blue-100 text-blue-700'
                   : 'text-gray-500 hover:bg-gray-100'
               }`}
             >
@@ -296,14 +296,14 @@ export default function PreviewCanvas() {
         <div className="flex items-center gap-1.5">
           <button
             onClick={() => setShowGrid(!showGrid)}
-            className={`p-1.5 rounded transition-colors ${showGrid ? 'text-indigo-600 bg-indigo-50' : 'text-gray-400 hover:bg-gray-100'}`}
+            className={`p-1.5 rounded transition-colors ${showGrid ? 'text-blue-600 bg-blue-50' : 'text-gray-400 hover:bg-gray-100'}`}
             title="Grid"
           >
             <Grid3X3 size={13} />
           </button>
           <button
             onClick={() => setShowSafeZones(!showSafeZones)}
-            className={`p-1.5 rounded transition-colors ${showSafeZones ? 'text-indigo-600 bg-indigo-50' : 'text-gray-400 hover:bg-gray-100'}`}
+            className={`p-1.5 rounded transition-colors ${showSafeZones ? 'text-blue-600 bg-blue-50' : 'text-gray-400 hover:bg-gray-100'}`}
             title="Safe Zones"
           >
             <AlignCenter size={13} />

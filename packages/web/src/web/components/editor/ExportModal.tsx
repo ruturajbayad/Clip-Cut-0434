@@ -280,7 +280,7 @@ export default function ExportModal() {
             {/* Header */}
             <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
               <div className="flex items-center gap-2">
-                <div className="w-7 h-7 bg-indigo-600 rounded-lg flex items-center justify-center">
+                <div className="w-7 h-7 bg-blue-600 rounded-lg flex items-center justify-center">
                   <Download size={14} className="text-white" />
                 </div>
                 <div>
@@ -321,7 +321,7 @@ export default function ExportModal() {
                   </button>
                   <button
                     onClick={handleDownload}
-                    className="flex-1 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2"
+                    className="flex-1 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2"
                   >
                     <Download size={14} />
                     Download
@@ -333,7 +333,7 @@ export default function ExportModal() {
             ) : status === 'exporting' ? (
               <div className="p-8 flex flex-col items-center gap-4 text-center">
                 <div className="relative">
-                  <Loader2 size={40} className="text-indigo-500 animate-spin" />
+                  <Loader2 size={40} className="text-blue-500 animate-spin" />
                 </div>
                 <div>
                   <div className="font-semibold text-gray-800">Rendering frames…</div>
@@ -348,7 +348,7 @@ export default function ExportModal() {
                   </div>
                   <div className="w-full h-2 bg-gray-100 rounded-full overflow-hidden">
                     <motion.div
-                      className="h-full bg-indigo-600 rounded-full"
+                      className="h-full bg-blue-600 rounded-full"
                       style={{ width: `${progress}%` }}
                       transition={{ duration: 0.1 }}
                     />
@@ -386,7 +386,7 @@ export default function ExportModal() {
                         onClick={() => setFormat(f)}
                         className={`flex-1 py-2 text-xs font-medium rounded-lg border-2 transition-all ${
                           format === f
-                            ? 'border-indigo-500 text-indigo-600 bg-indigo-50'
+                            ? 'border-blue-500 text-blue-600 bg-blue-50'
                             : 'border-gray-200 text-gray-600 hover:border-gray-300'
                         }`}
                       >
@@ -415,7 +415,7 @@ export default function ExportModal() {
                         onClick={() => setResolution(r)}
                         className={`py-2 text-xs font-medium rounded-lg border-2 transition-all ${
                           resolution.value === r.value
-                            ? 'border-indigo-500 text-indigo-600 bg-indigo-50'
+                            ? 'border-blue-500 text-blue-600 bg-blue-50'
                             : 'border-gray-200 text-gray-600 hover:border-gray-300'
                         }`}
                       >
@@ -441,7 +441,7 @@ export default function ExportModal() {
                           onClick={() => setFps(f)}
                           className={`flex-1 py-1.5 text-xs font-medium rounded-lg border-2 transition-all ${
                             fps === f
-                              ? 'border-indigo-500 text-indigo-600 bg-indigo-50'
+                              ? 'border-blue-500 text-blue-600 bg-blue-50'
                               : 'border-gray-200 text-gray-600 hover:border-gray-300'
                           }`}
                         >
@@ -497,7 +497,7 @@ export default function ExportModal() {
 
                 <button
                   onClick={handleExport}
-                  className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-medium text-sm transition-colors flex items-center justify-center gap-2 shadow-sm"
+                  className="w-full py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-medium text-sm transition-colors flex items-center justify-center gap-2 shadow-sm"
                 >
                   <Download size={15} />
                   Export Video

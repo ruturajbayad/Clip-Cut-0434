@@ -182,7 +182,7 @@ export default function TransportBar() {
         <button
           onClick={() => videoInputRef.current?.click()}
           title="Import video / image"
-          className="flex items-center gap-1 px-2 py-1 rounded text-[10px] text-gray-600 hover:bg-indigo-50 hover:text-indigo-600 transition-colors border border-gray-200 hover:border-indigo-300"
+          className="flex items-center gap-1 px-2 py-1 rounded text-[10px] text-gray-600 hover:bg-blue-50 hover:text-blue-600 transition-colors border border-gray-200 hover:border-blue-300"
         >
           <Plus size={8} className="text-gray-400" />
           <Video size={11} style={{ color: TRACK_COLORS.video }} />

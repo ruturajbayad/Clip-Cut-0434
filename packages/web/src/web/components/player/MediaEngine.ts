@@ -156,6 +156,10 @@ export class MediaEngine {
     this._pendingReveal.clear();
     this._revealedClips.clear();
     this._staleClips.clear();
+    // Reset entry transition transforms on all wrappers
+    this.wrapperEls.forEach((wrapper) => {
+      wrapper.style.transform = 'translateZ(0)';
+    });
     this._syncFrame(this._time);
     if (!this._playing) this.opts.onTimeUpdate(this._time);
   }
@@ -366,6 +370,52 @@ export class MediaEngine {
     }
   }
 
+  // ─── Entry transition helper ──────────────────────────────────────────────────
+
+  private _ENTRY_DUR = 0.5; // seconds
+
+  private _applyEntryTransition(wrapper: HTMLElement, clip: Clip, time: number) {
+    const entry = clip.entryTransition ?? 'none';
+    if (entry === 'none') {
+      // Reset any leftover transforms
+      wrapper.style.transform = 'translateZ(0)';
+      wrapper.style.opacity = '1';
+      return;
+    }
+    const elapsed = time - clip.startTime;
+    if (elapsed >= this._ENTRY_DUR) {
+      wrapper.style.transform = 'translateZ(0)';
+      wrapper.style.opacity = '1';
+      return;
+    }
+    const t = Math.max(0, Math.min(1, elapsed / this._ENTRY_DUR));
+    switch (entry) {
+      case 'fade-in':
+        // MediaEngine already controls opacity via _setWrapperVisible; apply inline opacity on the video child
+        wrapper.style.transform = 'translateZ(0)';
+        wrapper.style.opacity = String(t);
+        break;
+      case 'slide-up': {
+        const dy = (1 - t) * 40;
+        wrapper.style.transform = `translateY(${dy}px) translateZ(0)`;
+        wrapper.style.opacity = String(t);
+        break;
+      }
+      case 'slide-left': {
+        const dx = (1 - t) * 60;
+        wrapper.style.transform = `translateX(${dx}px) translateZ(0)`;
+        wrapper.style.opacity = String(t);
+        break;
+      }
+      case 'zoom-in': {
+        const scale = 0.6 + t * 0.4;
+        wrapper.style.transform = `scale(${scale}) translateZ(0)`;
+        wrapper.style.opacity = String(t);
+        break;
+      }
+    }
+  }
+
   // ─── Video element sync ───────────────────────────────────────────────────────
 
   private _syncVideoEl(
@@ -376,11 +426,22 @@ export class MediaEngine {
     isPreWarming: boolean,
   ) {
     if (isActive) {
-      const clipTime = (clip.trimStart ?? 0) + (time - clip.startTime);
+      const speed = clip.speed ?? 1;
+      // safeTime = position inside the source file at the current project time
+      // = trimStart + (elapsed project time * speed)
+      const clipTime = (clip.trimStart ?? 0) + (time - clip.startTime) * speed;
       const safeTime = Math.max(0, clipTime);
 
       el.volume = Math.max(0, Math.min(1, clip.volume ?? 1));
       el.muted = !this._audioUnlocked;
+      // Always set playbackRate so speed changes take effect immediately
+      el.playbackRate = speed;
+
+      // Apply entry transition to wrapper (only during first ENTRY_DUR seconds)
+      const wrapper = this.wrapperEls.get(clip.id);
+      if (wrapper && this._revealedClips.has(clip.id)) {
+        this._applyEntryTransition(wrapper, clip, time);
+      }
 
       if (this._playing) {
         if (el.paused) {
@@ -391,6 +452,7 @@ export class MediaEngine {
 
           const tryPlay = () => {
             if (!this._playing) return;
+            el.playbackRate = speed;
             el.play().catch((err) => this.opts.onError?.(clip.id, err));
           };
 
@@ -401,6 +463,7 @@ export class MediaEngine {
           }
         } else {
           // Already playing — only correct large drift, never during seeking
+          el.playbackRate = speed;
           if (el.readyState >= 3 && !el.seeking) {
             const drift = Math.abs(el.currentTime - safeTime);
             if (drift > 0.5) el.currentTime = safeTime;
