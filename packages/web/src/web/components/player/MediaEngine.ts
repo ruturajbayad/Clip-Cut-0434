@@ -26,11 +26,6 @@
  *
  *  4. Drift correction guarded by !seeking && readyState>=3: prevents the
  *     seek-loop that stalled playback after transitions.
- *
- * AUDIO:
- *  Videos start unmuted. Browser autoplay policy may block audio until first
- *  user gesture. We immediately attempt to play with audio; if blocked we fall
- *  back to muted and retry unmute after any user interaction.
  */
 
 import type { Clip, Project, MediaItem } from '../../store/editorStore';
@@ -44,7 +39,7 @@ export interface MediaEngineOptions {
 }
 
 // How many seconds before clip.startTime to begin pre-warming the decoder
-const PRE_WARM_WINDOW = 8.0;
+const PRE_WARM_WINDOW = 5.0;
 
 // rVFC is available in Chrome 83+, Edge 83+
 type VideoFrameCallback = (now: number, metadata: unknown) => void;
@@ -71,10 +66,7 @@ export class MediaEngine {
   private _library: MediaItem[] = [];
   private _loop = true;
 
-  // Audio state — start as "unlocked" to attempt audio immediately.
-  // Browser will mute if autoplay policy blocks it; we retry on first gesture.
-  private _audioUnlocked = true;
-  private _audioRetryPending = false;
+  private _audioUnlocked = false;
 
   // Clips currently shown at opacity 1 (may lag 1 frame behind isActive for crossfade hold)
   private _revealedClips = new Set<string>();
@@ -104,16 +96,11 @@ export class MediaEngine {
   setProject(project: Project, library: MediaItem[]) {
     this._project = project;
     this._library = library;
-    // Always sync — even during playback. This ensures any clip whose
-    // trimStart/speed just changed (e.g. speed edit) gets its <video> element
-    // seeked to the correct position immediately, so it's pre-warmed by the
-    // time the playhead reaches it, not buffering from position 0.
-    this._syncFrame(this._time);
+    if (!this._playing) this._syncFrame(this._time);
   }
 
   registerVideo(clipId: string, el: HTMLVideoElement) {
-    // Start unmuted — browser will throw if autoplay policy blocks, we handle below
-    el.muted = false;
+    el.muted = !this._audioUnlocked;
     el.playsInline = true;
     el.preload = 'auto';
     this.videoEls.set(clipId, el);
@@ -150,8 +137,6 @@ export class MediaEngine {
     this._playing = true;
     this.lastRafTs = performance.now();
     this.lastUiTs = performance.now();
-    // Unlock audio on explicit play action (user gesture)
-    this._audioUnlocked = true;
     this._startLoop();
   }
 
@@ -175,23 +160,10 @@ export class MediaEngine {
     if (!this._playing) this.opts.onTimeUpdate(this._time);
   }
 
-  /** Force unmute all video elements (call after confirmed user gesture) */
-  unmuteAll() {
-    this._audioUnlocked = true;
-    this.videoEls.forEach((el) => {
-      el.muted = false;
-      // Retry volume application
-      if (!el.paused) {
-        el.volume = el.volume; // triggers volume apply
-      }
-    });
-  }
-
   destroy() {
     cancelAnimationFrame(this.rafId);
     window.removeEventListener('click', this._unlock);
     window.removeEventListener('keydown', this._unlock);
-    window.removeEventListener('touchstart', this._unlock);
     this.videoEls.forEach((el) => el.pause());
     this.audioEls.forEach((el) => el.pause());
     this.videoEls.clear();
@@ -254,6 +226,9 @@ export class MediaEngine {
     const clips = this._project.tracks.flatMap((t) => t.clips);
 
     // Pass 1: Mark pending reveals for any newly active video clips.
+    // Doing this before evaluating outgoing clips ensures that the outgoing clips
+    // know a transition is pending and hold their last frame (preventing a 1-frame black flash
+    // caused by array evaluation order).
     clips.forEach((clip) => {
       if (clip.type !== 'video') return;
       const isActive = time >= clip.startTime && time < clip.startTime + clip.duration;
@@ -339,41 +314,40 @@ export class MediaEngine {
     wrapper.style.pointerEvents = 'none';
   }
 
+  /**
+   * Gate the reveal of an incoming clip on its first decoded video frame.
+   *
+   * Uses requestVideoFrameCallback (Chrome/Edge 83+) when available.
+   * Falls back to an immediate reveal after the element reaches readyState ≥ 3.
+   *
+   * This guarantees the outgoing clip's last frame is held visible until the
+   * incoming clip has at least one frame ready to paint — zero black frames.
+   */
   private _gateReveal(clipId: string, wrapper: HTMLElement) {
     this._pendingReveal.add(clipId);
 
     const el = this.videoEls.get(clipId);
     if (!el) {
+      // No video element yet — reveal immediately (text/image track?)
       this._doReveal(clipId, wrapper);
       return;
     }
 
     const reveal = () => {
-      if (!this._pendingReveal.has(clipId)) return;
+      if (!this._pendingReveal.has(clipId)) return; // was cancelled
       this._doReveal(clipId, wrapper);
     };
 
-    // Each clip now has a unique src (fragment #clipId), so its <video> element
-    // has its own independent decode pipeline — no seek contention with other clips.
-    // If frame data is already available (pre-warmed), reveal immediately.
-    if (el.readyState >= 2) {
-      Promise.resolve().then(reveal);
-      return;
+    if (supportsRVFC(el)) {
+      // Best path: fire exactly when first frame is painted to screen
+      (el as any).requestVideoFrameCallback(reveal);
+    } else if (el.readyState >= 3) {
+      // Already has frames buffered — reveal now
+      reveal();
+    } else {
+      // Fall back: reveal as soon as browser can play
+      el.addEventListener('canplay', reveal, { once: true });
     }
-
-    // If rVFC is available and video is playing, use it for precise frame timing
-    if (supportsRVFC(el) && !el.paused) {
-      (el as rVFCVideo).requestVideoFrameCallback(reveal);
-      return;
-    }
-
-    // Otherwise wait for canplay
-    el.addEventListener('canplay', reveal, { once: true });
-
-    // Safety: force-reveal after 400ms regardless — prevents permanent freeze
-    setTimeout(() => {
-      if (this._pendingReveal.has(clipId)) reveal();
-    }, 400);
   }
 
   private _doReveal(clipId: string, wrapper: HTMLElement) {
@@ -381,6 +355,7 @@ export class MediaEngine {
     this._revealedClips.add(clipId);
     this._setWrapperVisible(wrapper);
 
+    // If no clips are waiting to reveal, clean up any stale outgoing clips
     if (this._pendingReveal.size === 0) {
       for (const staleId of this._staleClips) {
         this._revealedClips.delete(staleId);
@@ -401,54 +376,22 @@ export class MediaEngine {
     isPreWarming: boolean,
   ) {
     if (isActive) {
-      const speed = clip.speed ?? 1;
-      const reverse = clip.reverse ?? false;
-      // How far into the source file (accounting for trimStart and speed)
-      const elapsed = (time - clip.startTime) * speed;
-      const trimStart = clip.trimStart ?? 0;
-      // sourceDuration: actual media file duration. Use el.duration if loaded, else fall back.
-      // For reverse mapping we need to know the full source length.
-      const sourceDur = clip.sourceDuration ?? (el.duration > 0 ? el.duration : (clip.duration * speed));
-      // Position in source file (forward)
-      const sourcePos = trimStart + elapsed;
-      // For reverse: play from end → start of the source segment
-      const safeTime = reverse
-        ? Math.max(0, Math.min(sourceDur, sourceDur - elapsed + trimStart))
-        : Math.max(0, Math.min(sourceDur, sourcePos));
+      const clipTime = (clip.trimStart ?? 0) + (time - clip.startTime);
+      const safeTime = Math.max(0, clipTime);
 
       el.volume = Math.max(0, Math.min(1, clip.volume ?? 1));
-      // Only mute if audio hasn't been unlocked yet (autoplay policy)
-      // We start as unlocked=true, so videos play with audio from the start
-      el.muted = false;
-
-      // Apply playback rate; reverse is handled by seeking each frame
-      el.playbackRate = reverse ? 1 : Math.max(0.0625, Math.min(16, speed));
+      el.muted = !this._audioUnlocked;
 
       if (this._playing) {
-        if (reverse) {
-          // Reverse mode: keep video paused, seek to computed position each frame.
-          // Threshold of 1/fps to avoid thrashing seeks on every RAF tick.
-          if (!el.paused) el.pause();
-          if (el.readyState >= 2 && Math.abs(el.currentTime - safeTime) > 0.033) {
-            el.currentTime = safeTime;
-          }
-        } else if (el.paused) {
+        if (el.paused) {
+          // Seek to position if meaningfully off
           if (Math.abs(el.currentTime - safeTime) > 0.08) {
             el.currentTime = safeTime;
           }
 
           const tryPlay = () => {
             if (!this._playing) return;
-            el.play().catch((err) => {
-              // If autoplay with audio is blocked, mute and retry
-              if ((err as Error)?.name === 'NotAllowedError') {
-                el.muted = true;
-                this._audioRetryPending = true;
-                el.play().catch(() => this.opts.onError?.(clip.id, err));
-              } else {
-                this.opts.onError?.(clip.id, err);
-              }
-            });
+            el.play().catch((err) => this.opts.onError?.(clip.id, err));
           };
 
           if (el.readyState >= 3) {
@@ -457,16 +400,10 @@ export class MediaEngine {
             el.addEventListener('canplay', () => tryPlay(), { once: true });
           }
         } else {
+          // Already playing — only correct large drift, never during seeking
           if (el.readyState >= 3 && !el.seeking) {
             const drift = Math.abs(el.currentTime - safeTime);
             if (drift > 0.5) el.currentTime = safeTime;
-          }
-          // Ensure unmuted if audio was unlocked via user gesture
-          if (!el.muted && this._audioUnlocked) {
-            // already unmuted — good
-          } else if (this._audioUnlocked && el.muted && this._audioRetryPending) {
-            el.muted = false;
-            this._audioRetryPending = false;
           }
         }
       } else {
@@ -474,20 +411,24 @@ export class MediaEngine {
         if (Math.abs(el.currentTime - safeTime) > 0.05) el.currentTime = safeTime;
       }
     } else if (isPreWarming) {
+      // ── Aggressive pre-warming ────────────────────────────────────────────
+      // Seek to the clip's start position so the decoder loads and caches frames.
+      // Call play() then immediately pause() to force hardware decoder warmup.
       const startPos = clip.trimStart ?? 0;
-      // Seek to trimStart once so the decoder pre-loads that position
-      if (Math.abs(el.currentTime - startPos) > 0.5) {
+      if (Math.abs(el.currentTime - startPos) > 0.15) {
         el.currentTime = startPos;
       }
-      // Play briefly to force decode, then pause
+
       if (el.paused && el.readyState < 3) {
+        // Kick the decoder: play() starts decoding, pause() halts rendering
         el.play()
           .then(() => el.pause())
-          .catch(() => { });
+          .catch(() => { }); // ignore autoplay policy errors during pre-warm
       } else if (!el.paused) {
         el.pause();
       }
     } else {
+      // ── Cold (far from start) — just make sure it's paused ────────────────
       if (!el.paused) el.pause();
     }
   }
@@ -502,14 +443,7 @@ export class MediaEngine {
       if (this._playing) {
         if (el.paused) {
           el.currentTime = audioTime;
-          el.play().catch((err) => {
-            if ((err as Error)?.name === 'NotAllowedError') {
-              // Audio blocked by autoplay policy — will retry on next user gesture
-              this._audioRetryPending = true;
-            } else {
-              this.opts.onError?.(clip.id, err);
-            }
-          });
+          el.play().catch((err) => this.opts.onError?.(clip.id, err));
         } else {
           if (el.readyState >= 3 && !el.seeking) {
             const drift = Math.abs(el.currentTime - audioTime);
@@ -525,28 +459,18 @@ export class MediaEngine {
     }
   }
 
-  // ─── Audio unlock (retry after user gesture if autoplay was blocked) ──────────
+  // ─── Audio unlock ─────────────────────────────────────────────────────────────
 
   private _unlock = () => {
+    if (this._audioUnlocked) return;
     this._audioUnlocked = true;
-    if (this._audioRetryPending) {
-      this._audioRetryPending = false;
-      // Unmute all videos and retry audio
-      this.videoEls.forEach((el) => {
-        el.muted = false;
-      });
-      // Retry stalled audio clips
-      this.audioEls.forEach((el) => {
-        if (el.paused && this._playing) {
-          el.play().catch(() => { });
-        }
-      });
-    }
+    this.videoEls.forEach((el) => { el.muted = false; });
+    window.removeEventListener('click', this._unlock);
+    window.removeEventListener('keydown', this._unlock);
   };
 
   private _bindUnlock() {
-    window.addEventListener('click', this._unlock);
-    window.addEventListener('keydown', this._unlock);
-    window.addEventListener('touchstart', this._unlock);
+    window.addEventListener('click', this._unlock, { once: false });
+    window.addEventListener('keydown', this._unlock, { once: false });
   }
 }
