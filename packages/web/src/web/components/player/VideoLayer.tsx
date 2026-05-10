@@ -125,7 +125,7 @@ const VideoItem = memo(function VideoItem({
             // Apply filter immediately on ref assignment
             if (el) el.style.filter = buildFilter(clip);
           }}
-          src={media.src}
+          src={`${media.src}#${clip.id}`}
           className="w-full h-full"
           style={{
             objectFit: isOverlay ? 'contain' : 'cover',
