@@ -44,7 +44,7 @@ export interface MediaEngineOptions {
 }
 
 // How many seconds before clip.startTime to begin pre-warming the decoder
-const PRE_WARM_WINDOW = 5.0;
+const PRE_WARM_WINDOW = 8.0;
 
 // rVFC is available in Chrome 83+, Edge 83+
 type VideoFrameCallback = (now: number, metadata: unknown) => void;
@@ -353,13 +353,34 @@ export class MediaEngine {
       this._doReveal(clipId, wrapper);
     };
 
-    if (supportsRVFC(el)) {
-      (el as any).requestVideoFrameCallback(reveal);
-    } else if (el.readyState >= 3) {
-      reveal();
-    } else {
-      el.addEventListener('canplay', reveal, { once: true });
+    // rVFC only fires when a new frame is painted — i.e. the video must be PLAYING.
+    // If the video is paused (pre-warmed) and has data ready, reveal immediately
+    // using readyState check to avoid a black-frame stall.
+    if (el.readyState >= 2) {
+      // Frame data available — reveal immediately, no need to wait for rVFC.
+      // Use a microtask so the calling _syncFrame pass completes first.
+      Promise.resolve().then(reveal);
+      return;
     }
+
+    // Not ready yet — wait for canplay, then reveal
+    const onCanPlay = () => {
+      if (!this._pendingReveal.has(clipId)) return;
+      if (supportsRVFC(el) && !el.paused) {
+        // Video is playing and rVFC available — use it for precise frame timing
+        (el as rVFCVideo).requestVideoFrameCallback(reveal);
+      } else {
+        reveal();
+      }
+    };
+
+    el.addEventListener('canplay', onCanPlay, { once: true });
+
+    // Safety timeout: if canplay never fires within 300ms, reveal anyway
+    // to prevent a permanent freeze (e.g. network slow, codec issue)
+    setTimeout(() => {
+      if (this._pendingReveal.has(clipId)) reveal();
+    }, 300);
   }
 
   private _doReveal(clipId: string, wrapper: HTMLElement) {
@@ -461,16 +482,23 @@ export class MediaEngine {
       }
     } else if (isPreWarming) {
       const startPos = clip.trimStart ?? 0;
+      // Always seek to trimStart so frame is decoded and in GPU memory
       if (Math.abs(el.currentTime - startPos) > 0.15) {
         el.currentTime = startPos;
       }
-
-      if (el.paused && el.readyState < 3) {
+      // Force the browser to decode the frame: play briefly then pause.
+      // This ensures readyState reaches >= 2 so _gateReveal can reveal immediately.
+      if (el.paused) {
         el.play()
-          .then(() => el.pause())
+          .then(() => {
+            // Pause right away — we just want the decoder to warm up
+            el.pause();
+            el.currentTime = startPos;
+          })
           .catch(() => { });
       } else if (!el.paused) {
         el.pause();
+        el.currentTime = startPos;
       }
     } else {
       if (!el.paused) el.pause();
