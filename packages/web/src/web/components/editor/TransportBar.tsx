@@ -152,7 +152,10 @@ export default function TransportBar() {
         <motion.button
           whileTap={{ scale: 0.93 }}
           onClick={() => setIsPlaying(!isPlaying)}
-          className="w-8 h-8 bg-indigo-600 hover:bg-indigo-700 rounded-lg flex items-center justify-center text-white transition-colors shadow-sm"
+          className="w-8 h-8 rounded-lg flex items-center justify-center text-white transition-colors shadow-sm"
+          style={{ background: '#0f172a' }}
+          onMouseEnter={(e) => ((e.currentTarget as HTMLElement).style.background = '#1e293b')}
+          onMouseLeave={(e) => ((e.currentTarget as HTMLElement).style.background = '#0f172a')}
           title="Play / Pause (Space)"
         >
           {isPlaying ? <Pause size={13} /> : <Play size={13} className="ml-0.5" />}

@@ -32,7 +32,7 @@ const MINIBAR_H      = 10;
 const TOOLBAR_H      = 32;
 
 const TRACK_COLORS: Record<string, string> = {
-  video: '#6366f1', audio: '#10b981', text: '#f59e0b', effects: '#ec4899', image: '#06b6d4',
+  video: '#3b82f6', audio: '#10b981', text: '#f59e0b', effects: '#ec4899', image: '#06b6d4',
 };
 
 // ─── Single Track Row (clips area only) ───────────────────────────────────────
@@ -56,7 +56,7 @@ const TrackClipsRow = memo(function TrackClipsRow({
 
   const pxPerSec = zoom;
   const rowH     = collapsed ? 28 : height + 8;
-  const color    = TRACK_COLORS[track.type] || '#6366f1';
+  const color    = TRACK_COLORS[track.type] || '#3b82f6';
 
   const [snapLine, setSnapLine] = useState<number | null>(null);
 
@@ -201,7 +201,7 @@ function MiniScrollBar({
       <motion.div
         className="absolute top-[2px] bottom-[2px] rounded-full cursor-grab"
         style={{ left: `${thumb.left}%`, width: `${thumb.width}%`, background: '#d1d5db' }}
-        whileHover={{ background: 'rgba(99,102,241,0.6)' }}
+        whileHover={{ background: 'rgba(59,130,246,0.6)' }}
       />
     </div>
   );
@@ -342,6 +342,10 @@ export default function Timeline() {
         } else if (x < 0) {
           el.scrollLeft = Math.max(0, t * pxPerSecRef.current - 40);
         }
+        // Sync ruler scroll to match clips scroll
+        if (rulerScrollRef.current) {
+          rulerScrollRef.current.scrollLeft = el.scrollLeft;
+        }
       }
     });
   }, []);
@@ -462,10 +466,10 @@ export default function Timeline() {
           style={{
             width: 40,
             height: 3,
-            background: isResizingPanel ? '#6366f1' : '#d1d5db',
+            background: isResizingPanel ? '#3b82f6' : '#d1d5db',
           }}
           onMouseEnter={(e) => {
-            (e.currentTarget as HTMLElement).style.background = '#6366f1';
+            (e.currentTarget as HTMLElement).style.background = '#3b82f6';
             (e.currentTarget as HTMLElement).style.width = '60px';
           }}
           onMouseLeave={(e) => {
@@ -667,8 +671,8 @@ export default function Timeline() {
         <button
           onClick={handleFitZoom}
           className="flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium transition-colors"
-          style={{ color: '#6366f1' }}
-          onMouseEnter={(e) => (e.currentTarget.style.background = 'rgba(99,102,241,0.08)')}
+          style={{ color: '#3b82f6' }}
+          onMouseEnter={(e) => (e.currentTarget.style.background = 'rgba(59,130,246,0.08)')}
           onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
         >
           <Maximize2 size={9} />

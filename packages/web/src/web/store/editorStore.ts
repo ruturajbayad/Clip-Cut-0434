@@ -52,6 +52,7 @@ export interface Clip {
   effect?: string;
   filterCss?: string; // raw CSS filter string from filter presets
   transition?: string;
+  entryTransition?: 'none' | 'fade-in' | 'slide-up' | 'slide-left' | 'zoom-in'; // entry animation
   trimStart?: number; // seconds offset into the source file (for split clips)
   speed?: number;          // playback rate multiplier (default 1)
   reverse?: boolean;       // play clip in reverse

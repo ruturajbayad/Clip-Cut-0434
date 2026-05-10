@@ -16,12 +16,12 @@ const CLIP_STYLES: Record<string, {
   wave: string; label: string; accent: string;
 }> = {
   video: {
-    border: '#6366f1',
+    border: '#3b82f6',
     bg: 'linear-gradient(135deg, #eef2ff 0%, #e0e7ff 100%)',
     bgSelected: 'linear-gradient(135deg, #e0e7ff 0%, #c7d2fe 100%)',
     wave: '#818cf8',
     label: '#4338ca',
-    accent: '#6366f1',
+    accent: '#3b82f6',
   },
   audio: {
     border: '#10b981',
@@ -313,7 +313,7 @@ export const ClipBlock = memo(function ClipBlock({
                       transform: 'translate(-50%, -50%)',
                       width: 6,
                       height: 6,
-                      background: '#6366f1',
+                      background: '#3b82f6',
                       borderRadius: 1,
                       rotate: '45deg',
                       opacity: 0.85,

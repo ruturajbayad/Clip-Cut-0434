@@ -2,6 +2,7 @@ import { useState, useCallback, memo } from 'react';
 import {
   Lock, Unlock, Eye, EyeOff, Volume2, VolumeX,
   ChevronDown, ChevronRight, Video, Music, Type, Sparkles, Trash2, ImageIcon,
+  ArrowUp, ArrowDown,
 } from 'lucide-react';
 import { useEditorStore, type Track } from '../../../store/editorStore';
 import { useShallow } from 'zustand/react/shallow';
@@ -9,7 +10,7 @@ import { useShallow } from 'zustand/react/shallow';
 export const LABEL_W = 196;
 
 const TRACK_META: Record<string, { color: string; Icon: React.ComponentType<{ size?: number; color?: string; className?: string }> }> = {
-  video:   { color: '#6366f1', Icon: Video },
+  video:   { color: '#3b82f6', Icon: Video },
   audio:   { color: '#10b981', Icon: Music },
   text:    { color: '#f59e0b', Icon: Type },
   effects: { color: '#ec4899', Icon: Sparkles },
@@ -27,8 +28,9 @@ interface TrackPanelProps {
 export const TrackPanel = memo(function TrackPanel({
   track, height, collapsed, onToggleCollapse, onHeightChange,
 }: TrackPanelProps) {
-  const { removeTrack } = useEditorStore(useShallow((s) => ({
+  const { removeTrack, reorderTrack } = useEditorStore(useShallow((s) => ({
     removeTrack: s.removeTrack,
+    reorderTrack: s.reorderTrack,
   })));
 
   const [muted, setMuted] = useState(track.muted);
@@ -104,13 +106,21 @@ export const TrackPanel = memo(function TrackPanel({
           <IconBtn title={visible ? 'Hide' : 'Show'} active={!visible} activeColor="#f59e0b" onClick={() => setVisible(!visible)}>
             {!visible ? <EyeOff size={9} /> : <Eye size={9} />}
           </IconBtn>
-          <IconBtn title={locked ? 'Unlock' : 'Lock'} active={locked} activeColor="#6366f1" onClick={() => setLocked(!locked)}>
+          <IconBtn title={locked ? 'Unlock' : 'Lock'} active={locked} activeColor="#3b82f6" onClick={() => setLocked(!locked)}>
             {locked ? <Lock size={9} /> : <Unlock size={9} />}
           </IconBtn>
           {hover && (
-            <IconBtn title="Remove track" active={false} activeColor="#ef4444" onClick={() => removeTrack(track.id)}>
-              <Trash2 size={9} />
-            </IconBtn>
+            <>
+              <IconBtn title="Move track up" active={false} activeColor="#3b82f6" onClick={() => reorderTrack(track.id, 'up')}>
+                <ArrowUp size={9} />
+              </IconBtn>
+              <IconBtn title="Move track down" active={false} activeColor="#3b82f6" onClick={() => reorderTrack(track.id, 'down')}>
+                <ArrowDown size={9} />
+              </IconBtn>
+              <IconBtn title="Remove track" active={false} activeColor="#ef4444" onClick={() => removeTrack(track.id)}>
+                <Trash2 size={9} />
+              </IconBtn>
+            </>
           )}
         </div>
       </div>
