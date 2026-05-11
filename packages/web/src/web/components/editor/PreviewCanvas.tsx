@@ -66,6 +66,7 @@ export default function PreviewCanvas() {
   // dimensions imperatively WITHOUT receiving them as props (which would cause
   // VideoItem re-renders → ref callbacks fire → MediaEngine loses video els).
   const canvasSizeRef = useRef({ w: 640, h: 360 });
+  const reapplyPositionsRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
     const update = () => {
@@ -79,6 +80,8 @@ export default function PreviewCanvas() {
       const newH = Math.floor(h);
       canvasSizeRef.current = { w: newW, h: newH };
       setCanvasSize({ w: newW, h: newH });
+      // Re-apply all video wrapper positions after canvas resize
+      reapplyPositionsRef.current?.();
     };
     update();
     const obs = new ResizeObserver(update);
@@ -216,6 +219,7 @@ export default function PreviewCanvas() {
               onWrapperRef={onWrapperRef}
               mainTrackId={mainVideoTrack?.id}
               canvasSizeRef={canvasSizeRef}
+              reapplyPositionsRef={reapplyPositionsRef}
             />
 
             {/*

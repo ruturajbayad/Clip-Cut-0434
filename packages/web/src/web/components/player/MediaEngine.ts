@@ -337,20 +337,42 @@ export class MediaEngine {
       return;
     }
 
+    // If the element hasn't started loading yet (readyState 0 = HAVE_NOTHING),
+    // call load() explicitly. Without this, the src may never be fetched and
+    // the canplay/rVFC events never fire — causing clips to stay invisible forever.
+    if (el.readyState < 1) {
+      el.load();
+    }
+
     const reveal = () => {
       if (!this._pendingReveal.has(clipId)) return; // was cancelled
       this._doReveal(clipId, wrapper);
     };
 
+    // Safety-net timeout: if rVFC/canplay never fires within 3s (e.g. network
+    // issue, codec mismatch, same-src element not triggering events), reveal anyway.
+    const timeoutId = window.setTimeout(() => {
+      if (this._pendingReveal.has(clipId)) {
+        console.warn(`[MediaEngine] reveal timeout for clip ${clipId}, forcing reveal`);
+        reveal();
+      }
+    }, 3000);
+
+    const revealOnce = () => {
+      window.clearTimeout(timeoutId);
+      reveal();
+    };
+
     if (supportsRVFC(el)) {
       // Best path: fire exactly when first frame is painted to screen
-      (el as any).requestVideoFrameCallback(reveal);
+      (el as rVFCVideo).requestVideoFrameCallback(revealOnce);
     } else if (el.readyState >= 3) {
       // Already has frames buffered — reveal now
+      window.clearTimeout(timeoutId);
       reveal();
     } else {
       // Fall back: reveal as soon as browser can play
-      el.addEventListener('canplay', reveal, { once: true });
+      el.addEventListener('canplay', revealOnce, { once: true });
     }
   }
 
@@ -445,8 +467,13 @@ export class MediaEngine {
 
       if (this._playing) {
         if (el.paused) {
+          // If element hasn't loaded at all, kick load() first
+          if (el.readyState < 1) {
+            el.load();
+          }
+
           // Seek to position if meaningfully off
-          if (Math.abs(el.currentTime - safeTime) > 0.08) {
+          if (el.readyState >= 1 && Math.abs(el.currentTime - safeTime) > 0.08) {
             el.currentTime = safeTime;
           }
 

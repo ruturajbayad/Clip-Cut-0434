@@ -19,7 +19,7 @@
  * Canvas size is read imperatively from the wrapper's parent element instead.
  */
 
-import { memo, useEffect, useRef } from 'react';
+import { memo, useEffect, useRef, useCallback } from 'react';
 import { Monitor } from 'lucide-react';
 import { useEditorStore, type Clip, type MediaItem } from '../../store/editorStore';
 
@@ -70,6 +70,8 @@ interface VideoLayerProps {
   mainTrackId: string | undefined;
   /** Canvas pixel dimensions — passed as refs (not props) to avoid VideoItem re-renders */
   canvasSizeRef: React.MutableRefObject<{ w: number; h: number }>;
+  /** Ref to a function that re-applies all wrapper positions (call on canvas resize) */
+  reapplyPositionsRef?: React.MutableRefObject<(() => void) | null>;
 }
 
 /**
@@ -105,7 +107,7 @@ const VideoItem = memo(function VideoItem({
 
     const applyPosition = (c: Clip) => {
       const el = wrapperRef.current;
-      if (!el || !isOverlay) return;
+      if (!el) return;
       const { w: cw, h: ch } = canvasSizeRef.current;
       if (cw && ch) applyOverlayPosition(el, c, cw, ch);
     };
@@ -123,17 +125,17 @@ const VideoItem = memo(function VideoItem({
       }
     });
     return unsub;
-  // clip.id + isOverlay are stable for the lifetime of this component
+  // clip.id is stable for the lifetime of this component
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [clip.id, isOverlay]);
+  }, [clip.id]);
 
   return (
     <div
       ref={(el) => {
         wrapperRef.current = el;
         onWrapperRef(clip.id, el);
-        // Apply initial overlay position imperatively on mount (before any subscription fires)
-        if (el && isOverlay) {
+        // Apply initial position imperatively on mount (before any subscription fires)
+        if (el) {
           const { w: cw, h: ch } = canvasSizeRef.current;
           if (cw && ch) applyOverlayPosition(el, clip, cw, ch);
         }
@@ -146,14 +148,14 @@ const VideoItem = memo(function VideoItem({
         opacity: 0,
         visibility: 'hidden',
         position: 'absolute',
-        // Main-track: fill canvas. Overlay: positioned dynamically via subscription above.
-        ...(isOverlay ? {} : { inset: 0 }),
+        // All clips are positioned via applyOverlayPosition (subscription + mount).
+        // Main track clips at scaleX=1,scaleY=1 fill the canvas; scaling shows black bars.
         zIndex: isOverlay ? 12 : 10,
         willChange: 'opacity, transform',
         transform: 'translateZ(0)',
         pointerEvents: 'none',
-        overflow: isOverlay ? 'hidden' : undefined,
-        borderRadius: isOverlay ? 4 : undefined,
+        overflow: 'hidden',
+        borderRadius: isOverlay ? 4 : 0,
       }}
     >
       {media?.type === 'video' ? (
@@ -203,7 +205,33 @@ export const VideoLayer = memo(function VideoLayer({
   onWrapperRef,
   mainTrackId,
   canvasSizeRef,
+  reapplyPositionsRef,
 }: VideoLayerProps) {
+  // Map of clipId → wrapper element, used to re-apply positions on canvas resize
+  const wrappersMap = useRef<Map<string, HTMLDivElement>>(new Map());
+  const clipsMap = useRef<Map<string, Clip>>(new Map());
+
+  // Keep clipsMap current so reapply sees latest clip data
+  videoClips.forEach((c) => clipsMap.current.set(c.id, c));
+
+  // Expose reapplyPositions to parent (called on canvas resize)
+  const reapply = useCallback(() => {
+    const { w: cw, h: ch } = canvasSizeRef.current;
+    if (!cw || !ch) return;
+    wrappersMap.current.forEach((el, clipId) => {
+      const clip = clipsMap.current.get(clipId);
+      if (clip) applyOverlayPosition(el, clip, cw, ch);
+    });
+  }, [canvasSizeRef]);
+
+  if (reapplyPositionsRef) reapplyPositionsRef.current = reapply;
+
+  const wrappedOnWrapperRef = useCallback((clipId: string, el: HTMLDivElement | null) => {
+    if (el) wrappersMap.current.set(clipId, el);
+    else wrappersMap.current.delete(clipId);
+    onWrapperRef(clipId, el);
+  }, [onWrapperRef]);
+
   return (
     <>
       {videoClips.map((clip) => {
@@ -221,7 +249,7 @@ export const VideoLayer = memo(function VideoLayer({
             media={media}
             isOverlay={isOverlay}
             onVideoRef={onVideoRef}
-            onWrapperRef={onWrapperRef}
+            onWrapperRef={wrappedOnWrapperRef}
             canvasSizeRef={canvasSizeRef}
           />
         );
