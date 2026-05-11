@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 
-const waveformCache = new Map<string, number[]>();
+const waveformCache = new Map<string, number[] | null>();
 let audioCtx: AudioContext | null = null;
 
 /**
@@ -8,7 +8,11 @@ let audioCtx: AudioContext | null = null;
  */
 export async function getAudioWaveform(src: string, numSamples = 300): Promise<number[]> {
   if (waveformCache.has(src)) {
-    return waveformCache.get(src)!;
+    const cached = waveformCache.get(src);
+    if (cached === null) {
+      throw new Error("Audio waveform decoding previously failed");
+    }
+    return cached;
   }
 
   try {
@@ -40,7 +44,8 @@ export async function getAudioWaveform(src: string, numSamples = 300): Promise<n
     waveformCache.set(src, normalized);
     return normalized;
   } catch (err) {
-    console.error("Failed to decode audio waveform", err);
+    console.error("Failed to decode audio waveform for:", src, err);
+    waveformCache.set(src, null); // cache failure
     throw err;
   }
 }

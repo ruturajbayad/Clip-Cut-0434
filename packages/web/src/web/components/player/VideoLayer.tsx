@@ -216,7 +216,7 @@ const VideoItem = memo(function VideoItem({
           }}
           playsInline
           preload="auto"
-          muted
+          muted={false}
         />
       ) : mediaType === 'image' && mediaSrc ? (
         <img

@@ -101,7 +101,7 @@ export function computeDuration(tracks: Track[]): number {
       max = Math.max(max, c.startTime + c.duration);
     }
   }
-  return max === 0 ? 0 : Math.max(max, 10);
+  return max === 0 ? 5 : Math.max(max, 5);
 }
 
 // ── Easing functions ──────────────────────────────────────────────────────────
@@ -242,11 +242,7 @@ const makeDefaultTracks = (): Track[] => {
       locked: false,
       visible: true,
       height: 56,
-      clips: [
-        { id: nanoid(), trackId: v1id, name: 'Clip 01.mp4', type: 'video', startTime: 0,  duration: 8,  sourceDuration: 8,  speed: 1, thumbnailColor: '#818CF8', opacity: 1, x: 0.5, y: 0.5, scaleX: 1, scaleY: 1, trimStart: 0,  src: DEFAULT_VIDEO_SRC, mediaId: DEFAULT_VIDEO_MEDIA_ID },
-        { id: nanoid(), trackId: v1id, name: 'Clip 02.mp4', type: 'video', startTime: 8,  duration: 8,  sourceDuration: 8,  speed: 1, thumbnailColor: '#6366F1', opacity: 1, x: 0.5, y: 0.5, scaleX: 1, scaleY: 1, trimStart: 8,  src: DEFAULT_VIDEO_SRC, mediaId: DEFAULT_VIDEO_MEDIA_ID },
-        { id: nanoid(), trackId: v1id, name: 'Clip 03.mp4', type: 'video', startTime: 16, duration: 7,  sourceDuration: 7,  speed: 1, thumbnailColor: '#818CF8', opacity: 1, x: 0.5, y: 0.5, scaleX: 1, scaleY: 1, trimStart: 16, src: DEFAULT_VIDEO_SRC, mediaId: DEFAULT_VIDEO_MEDIA_ID },
-      ],
+      clips: [],
     },
     {
       id: a1id,
@@ -256,9 +252,7 @@ const makeDefaultTracks = (): Track[] => {
       locked: false,
       visible: true,
       height: 48,
-      clips: [
-        { id: nanoid(), trackId: a1id, name: 'Background Music.mp3', type: 'audio', startTime: 0, duration: 23, thumbnailColor: '#34D399', volume: 0.8 },
-      ],
+      clips: [],
     },
     {
       id: t1id,
@@ -268,9 +262,7 @@ const makeDefaultTracks = (): Track[] => {
       locked: false,
       visible: true,
       height: 44,
-      clips: [
-        { id: nanoid(), trackId: t1id, name: 'Title Text', type: 'text', startTime: 2, duration: 4, thumbnailColor: '#FBBF24', text: 'Hello World', fontSize: 72, fontFamily: 'Inter', color: '#FFFFFF', x: 0.5, y: 0.8, scaleX: 0.6, scaleY: 0.15 },
-      ],
+      clips: [],
     },
   ];
 };

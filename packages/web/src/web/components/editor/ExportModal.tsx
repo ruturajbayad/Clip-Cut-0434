@@ -33,14 +33,13 @@ const RESOLUTIONS = [
   { label: '480p',  h: 480,  desc: 'Fast preview' },
   { label: '720p',  h: 720,  desc: 'Recommended' },
   { label: '1080p', h: 1080, desc: 'Full HD' },
-  { label: '4K',    h: 2160, desc: 'Ultra HD' },
 ] as const;
 
-const FPS_OPTIONS = [24, 30, 60] as const;
+const FPS_OPTIONS = [24, 30] as const;
 
 // Auto bitrate by resolution (Mbps)
 const AUTO_BITRATE: Record<string, number> = {
-  '480p': 4, '720p': 8, '1080p': 16, '4K': 40,
+  '480p': 4, '720p': 8, '1080p': 16,
 };
 
 type ExportStatus = 'idle' | 'preparing' | 'exporting' | 'done' | 'error';
@@ -222,20 +221,25 @@ function drawVideo(
   if (live.blendMode && live.blendMode !== 'normal')
     ctx.globalCompositeOperation = live.blendMode as GlobalCompositeOperation;
 
+  const cx  = (live.x  ?? 0.5) * W;
+  const cy  = (live.y  ?? 0.5) * H;
+  ctx.translate(cx + offsetX, cy + offsetY);
+  if (live.rotation) ctx.rotate((live.rotation * Math.PI) / 180);
+
+  const vAR = vid.videoWidth / (vid.videoHeight || 1);
+
   if (isMain) {
-    const vAR = vid.videoWidth / (vid.videoHeight || 1);
     const bAR = W / H;
-    const dW  = vAR > bAR ? H * vAR : W;
-    const dH  = vAR > bAR ? H : W / vAR;
-    ctx.drawImage(vid, (W - dW) / 2, (H - dH) / 2, dW, dH);
+    const baseW = vAR > bAR ? H * vAR : W;
+    const baseH = vAR > bAR ? H : W / vAR;
+    
+    // Support dynamic scale and position keyframes on main background track video as well!
+    const dW = baseW * (live.scaleX ?? 1.0) * es;
+    const dH = baseH * (live.scaleY ?? 1.0) * es;
+    ctx.drawImage(vid, -dW / 2, -dH / 2, dW, dH);
   } else {
-    const cx  = (live.x  ?? 0.5) * W;
-    const cy  = (live.y  ?? 0.5) * H;
     const sw  = (live.scaleX ?? 1.0) * W;
     const sh  = (live.scaleY ?? 1.0) * H;
-    ctx.translate(cx + offsetX, cy + offsetY);
-    if (live.rotation) ctx.rotate((live.rotation * Math.PI) / 180);
-    const vAR = vid.videoWidth / (vid.videoHeight || 1);
     const bAR = sw / sh;
     const dW  = vAR > bAR ? sw * es : (sh * vAR) * es;
     const dH  = vAR > bAR ? (sw / vAR) * es : sh * es;
@@ -333,7 +337,7 @@ export default function ExportModal() {
     canvasAspectRatio:  s.canvasAspectRatio,
   })));
 
-  const [resolution, setResolution] = useState<typeof RESOLUTIONS[number]>(RESOLUTIONS[1]!);
+  const [resolution, setResolution] = useState<typeof RESOLUTIONS[number]>(RESOLUTIONS[2]!);
   const [fps,        setFps]        = useState<typeof FPS_OPTIONS[number]>(30);
   const [status,     setStatus]     = useState<ExportStatus>('idle');
   const [progress,   setProgress]   = useState(0);
@@ -377,6 +381,18 @@ export default function ExportModal() {
     let   audioCtx: AudioContext | null = null;
     let   wavUrl:   string | null = null;
 
+    // Create and unlock mixAudio synchronously within the user gesture
+    const mixAudio = document.createElement('audio');
+    mixAudio.style.display = 'none';
+    mixAudio.muted = true;
+    mixAudio.src = 'data:audio/wav;base64,UklGRigAAABXQVZFlm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQQAAAAAAA==';
+    document.body.appendChild(mixAudio);
+    audioEls.push(mixAudio);
+    try {
+      mixAudio.play().catch(() => {});
+      mixAudio.muted = false;
+    } catch {}
+
     const cleanup = () => {
       if (intervalRef.current) { clearInterval(intervalRef.current); intervalRef.current = null; }
       videoEls.forEach((v) => { try { v.pause(); v.src = ''; v.remove(); } catch {} });
@@ -392,13 +408,29 @@ export default function ExportModal() {
       canvas.height = H;
       const ctx     = canvas.getContext('2d', { alpha: false, willReadFrequently: false })!;
 
-      // ── Collect clips ───────────────────────────────────────────────────────
-      const allClips   = project.tracks.flatMap((t) => t.clips);
+      // ── Collect clips (filtered by track visibility / muting) ───────────────
       const mainTrack  = project.tracks.find((t) => t.type === 'video');
-      const videoClips = allClips.filter((c) => c.type === 'video');
-      const imageClips = allClips.filter((c) => c.type === 'image');
-      const textClips  = allClips.filter((c) => c.type === 'text');
-      const audioClips = allClips.filter((c) => c.type === 'audio');
+
+      const videoClips = project.tracks
+        .filter((t) => t.type === 'video' && t.visible)
+        .flatMap((t) => t.clips);
+
+      const imageClips = project.tracks
+        .filter((t) => t.type === 'image' && t.visible)
+        .flatMap((t) => t.clips);
+
+      const textClips  = project.tracks
+        .filter((t) => t.type === 'text' && t.visible)
+        .flatMap((t) => t.clips);
+
+      // Audio can come from audio tracks AND video tracks, but only if they are not muted!
+      const audioSourceClips = [
+        ...project.tracks.filter((t) => t.type === 'audio' && !t.muted).flatMap((t) => t.clips),
+        ...project.tracks.filter((t) => t.type === 'video' && !t.muted).flatMap((t) => t.clips)
+      ];
+
+      // Active visual layers to interpolate for drawing
+      const allClips   = [...videoClips, ...imageClips, ...textClips];
 
       const resolveSrc = (clip: Clip) =>
         clip.src || (clip.mediaId ? mediaLibrary.find((m) => m.id === clip.mediaId)?.src : undefined);
@@ -421,6 +453,7 @@ export default function ExportModal() {
         vid.crossOrigin   = 'anonymous';
         vid.preload       = 'auto';
         vid.muted         = true;      // audio comes from OfflineAudioContext
+        vid.playsInline   = true;
         vid.playbackRate  = clip.speed ?? 1;
         vid.style.cssText = 'position:fixed;left:-9999px;top:-9999px;width:1px;height:1px;opacity:0;pointer-events:none;';
         document.body.appendChild(vid);
@@ -487,12 +520,29 @@ export default function ExportModal() {
       const totalSamples = Math.max(1, Math.ceil(project.duration * SAMPLE_RATE));
       const offCtx       = new OfflineAudioContext(2, totalSamples, SAMPLE_RATE);
 
-      await Promise.all([...audioClips, ...videoClips].map(async (clip) => {
+      const audioBufferCache = new Map<string, AudioBuffer | null>();
+
+      await Promise.all(audioSourceClips.map(async (clip) => {
         const src = resolveSrc(clip);
         if (!src) return;
         try {
-          const ab      = await fetch(src).then((r) => r.arrayBuffer());
-          const decoded = await offCtx.decodeAudioData(ab);
+          let decoded: AudioBuffer | null = null;
+          if (audioBufferCache.has(src)) {
+            decoded = audioBufferCache.get(src)!;
+          } else {
+            try {
+              const ab = await fetch(src).then((r) => r.arrayBuffer());
+              decoded = await offCtx.decodeAudioData(ab);
+              audioBufferCache.set(src, decoded);
+            } catch (decodeErr) {
+              console.warn(`[Export] Failed to decode audio for ${src}:`, decodeErr);
+              audioBufferCache.set(src, null);
+              decoded = null;
+            }
+          }
+
+          if (!decoded) return; // skip if decoding failed or has no audio
+
           const gain    = offCtx.createGain();
           gain.gain.value = Math.max(0, Math.min(2, clip.volume ?? 1));
           gain.connect(offCtx.destination);
@@ -503,18 +553,17 @@ export default function ExportModal() {
           if (len <= 0) return;
           node.connect(gain);
           node.start(clip.startTime, trim, len);
-        } catch { /* skip bad audio */ }
+        } catch (err) {
+          console.error(`[Export] Failed to load/process audio clip ${clip.name}:`, err);
+        }
       }));
 
       const mixedBuf = await offCtx.startRendering();
       const wavBlob  = audioBufferToWav(mixedBuf);
       wavUrl         = URL.createObjectURL(wavBlob);
 
-      const mixAudio   = document.createElement('audio');
       mixAudio.src     = wavUrl;
       mixAudio.preload = 'auto';
-      document.body.appendChild(mixAudio);
-      audioEls.push(mixAudio);
 
       await new Promise<void>((resolve) => {
         const tid  = setTimeout(resolve, 5000);
@@ -527,7 +576,9 @@ export default function ExportModal() {
       if (cancelRef.current) { cleanup(); setStatus('idle'); return; }
 
       // ── Wire audio into MediaStream ─────────────────────────────────────────
-      audioCtx           = new AudioContext({ sampleRate: SAMPLE_RATE });
+      const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+      audioCtx           = new AudioContextClass({ sampleRate: SAMPLE_RATE });
+      await audioCtx.resume();
       const audioDest    = audioCtx.createMediaStreamDestination();
       const audioSrcNode = audioCtx.createMediaElementSource(mixAudio);
       audioSrcNode.connect(audioDest);
@@ -537,10 +588,18 @@ export default function ExportModal() {
       // Prefer MP4/H.264. Firefox doesn't support it → fall back to WebM/VP9.
       //
       const mime = (() => {
-        const candidates = ['video/mp4;codecs=avc1', 'video/mp4', 'video/webm;codecs=vp9', 'video/webm'];
+        const candidates = [
+          'video/mp4;codecs="avc1.424028, mp4a.40.2"',
+          'video/mp4;codecs=avc1,mp4a.40.2',
+          'video/mp4;codecs=avc1',
+          'video/mp4',
+          'video/webm;codecs=vp9',
+          'video/webm;codecs=h264',
+          'video/webm'
+        ];
         return candidates.find((c) => MediaRecorder.isTypeSupported(c)) ?? 'video/webm';
       })();
-      const ext         = mime.startsWith('video/mp4') ? 'mp4' : 'webm';
+      const ext         = mime.includes('video/mp4') ? 'mp4' : 'webm';
       const videoStream = canvas.captureStream(fps);
       audioDest.stream.getAudioTracks().forEach((t) => videoStream.addTrack(t));
 
@@ -558,15 +617,30 @@ export default function ExportModal() {
         recorder.onerror = (e) => reject(e);
       });
 
-      // ── Start recording ─────────────────────────────────────────────────────
+      // ── Warm up all video decoders ──────────────────────────────────────────
       setStatus('exporting');
       setIsPlaying(false);
-      setStage('Recording…');
+      setStage('Initializing video decoders...');
+      for (const clip of videoClips) {
+        const vid = videoElMap.get(clip.id);
+        if (vid) {
+          vid.currentTime = clip.trimStart ?? 0;
+          vid.playbackRate = clip.speed ?? 1;
+          try {
+            await vid.play();
+            vid.pause();
+          } catch {}
+        }
+      }
 
+      // ── Start recording ─────────────────────────────────────────────────────
+      setStage('Recording…');
       recorder.start(200);
 
       // Start audio
       mixAudio.currentTime = 0;
+      mixAudio.muted = false;
+      mixAudio.volume = 1.0;
       mixAudio.play().catch(() => {});
 
       const totalDuration = project.duration;
@@ -582,48 +656,39 @@ export default function ExportModal() {
       let tickBusy   = false; // re-entrancy guard
 
       await new Promise<void>((resolve) => {
-        // ── KEY FIX: use setInterval not rAF ───────────────────────────────
-        //
-        // requestAnimationFrame STOPS FIRING when the tab loses focus.
-        // setInterval keeps firing regardless → export completes even if
-        // user switches tabs.
-        //
-        // We also draw synchronously (no awaits inside the tick) so the
-        // interval never accumulates debt.
-        //
-        intervalRef.current = setInterval(() => {
-          // If the previous tick's canvas draw is still running (slow GPU),
-          // skip this tick rather than piling up work on the main thread.
-          if (tickBusy) return;
-          tickBusy = true;
+        const startTime = performance.now();
 
+        const tick = () => {
           if (cancelRef.current || frameIndex >= totalFrames) {
-            tickBusy = false;
             resolve();
             return;
           }
 
           const t = frameIndex * frameDuration;
 
-          // ── Manage video playback (play/pause — never seek) ───────────────
+          // ── Manage video playback (play/pause — never seek unless heavy drift) ──
           for (const clip of videoClips) {
             const vid    = videoElMap.get(clip.id);
             if (!vid) continue;
             const active  = t >= clip.startTime && t < clip.startTime + clip.duration;
             const playing = videoPlaying.get(clip.id) ?? false;
 
-            if (active && !playing) {
-              // First frame of this clip — the video is already pre-seeked to
-              // trimStart, so just start playing. We may need to nudge position
-              // slightly if another clip played this video earlier.
-              const expectedSrc = (clip.trimStart ?? 0) + (t - clip.startTime) * (clip.speed ?? 1);
-              const drift       = Math.abs(vid.currentTime - expectedSrc);
-              // Only re-seek if off by more than 0.5s (e.g. overlapping clips or reuse)
-              if (drift > 0.5) vid.currentTime = expectedSrc;
-              vid.playbackRate = clip.speed ?? 1;
-              vid.play().catch(() => {});
-              videoPlaying.set(clip.id, true);
-            } else if (!active && playing) {
+            if (active) {
+              if (!playing) {
+                const expectedSrc = (clip.trimStart ?? 0) + (t - clip.startTime) * (clip.speed ?? 1);
+                vid.currentTime = expectedSrc;
+                vid.playbackRate = clip.speed ?? 1;
+                vid.play().catch(() => {});
+                videoPlaying.set(clip.id, true);
+              } else {
+                const expectedSrc = (clip.trimStart ?? 0) + (t - clip.startTime) * (clip.speed ?? 1);
+                const drift       = Math.abs(vid.currentTime - expectedSrc);
+                // Gentle nudge if playhead drifts by >0.25s
+                if (drift > 0.25) {
+                  vid.currentTime = expectedSrc;
+                }
+              }
+            } else if (playing) {
               vid.pause();
               videoPlaying.set(clip.id, false);
             }
@@ -686,21 +751,27 @@ export default function ExportModal() {
           }
 
           frameIndex++;
-          tickBusy = false;
           // Throttle React re-renders — only update UI every 10 frames.
-          // Calling setState 30x/sec triggers 30 re-renders/sec on the main
-          // thread, which competes with canvas draw and freezes the browser.
-          // setCurrentTime also drives the player re-render — skip it entirely
-          // during export; we restore it to 0 when done.
           if (frameIndex % 10 === 0 || frameIndex === totalFrames) {
             setProgress(Math.min(99, (frameIndex / totalFrames) * 100));
             setStage(`Frame ${frameIndex} / ${totalFrames}`);
           }
-        }, frameDuration * 1000);
+
+          // Schedule next tick dynamically using a self-correcting frame timer.
+          // This ensures perfectly constant timing with zero drift or overlapping queues.
+          const elapsed = performance.now() - startTime;
+          const targetNextTime = frameIndex * frameDuration * 1000;
+          const delay = Math.max(0, targetNextTime - elapsed);
+
+          intervalRef.current = setTimeout(tick, delay) as any;
+        };
+
+        // Start the tick loop
+        tick();
       });
 
       // ── Finish ──────────────────────────────────────────────────────────────
-      if (intervalRef.current) { clearInterval(intervalRef.current); intervalRef.current = null; }
+      if (intervalRef.current) { clearTimeout(intervalRef.current); intervalRef.current = null; }
 
       // Black tail frame
       ctx.fillStyle = '#000000';
@@ -713,7 +784,8 @@ export default function ExportModal() {
 
       const blob   = await recordingDone;
       const url    = URL.createObjectURL(blob);
-      const name   = `${project.name.replace(/\s+/g, '_')}.${ext}`;
+      const safeName = (project.name || 'Untitled_Project').replace(/[^a-zA-Z0-9_-]/g, '_');
+      const name   = `${safeName}.${ext}`;
       const sizeMB = (blob.size / 1024 / 1024).toFixed(1);
 
       setDownloadUrl(url);
@@ -741,7 +813,16 @@ export default function ExportModal() {
   const handleDownload = useCallback(() => {
     if (!downloadUrl) return;
     const a = document.createElement('a');
-    a.href = downloadUrl; a.download = fileName; a.click();
+    a.style.display = 'none';
+    a.href = downloadUrl;
+    a.setAttribute('download', fileName || 'export.mp4');
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => {
+      try {
+        document.body.removeChild(a);
+      } catch {}
+    }, 100);
   }, [downloadUrl, fileName]);
 
   // ─── UI ───────────────────────────────────────────────────────────────────
@@ -798,6 +879,11 @@ export default function ExportModal() {
                     {exportW}×{exportH} · {fps}fps · {resolution.label} · {outputMime.startsWith('video/mp4') ? 'MP4' : 'WebM'}
                   </div>
                   {fileSize && <div className="text-xs text-gray-400 mt-0.5">File size: {fileSize}</div>}
+                  {!outputMime.startsWith('video/mp4') && (
+                    <div className="mt-4 p-3 bg-blue-50/60 rounded-xl text-[11px] text-blue-600 border border-blue-100/50 text-left leading-relaxed">
+                      <strong>Mac User Notice:</strong> Your browser exported this video as a <strong>.webm</strong> file. macOS QuickTime doesn't play WebM natively. We recommend playing it using <strong>VLC</strong> or dragging it into a Chrome tab, or exporting using Safari for a native MP4 file.
+                    </div>
+                  )}
                 </div>
                 <div className="flex items-center gap-2 w-full">
                   <button onClick={() => { setStatus('idle'); setDownloadUrl(null); }}
