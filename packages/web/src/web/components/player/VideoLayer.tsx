@@ -12,6 +12,11 @@
  *
  * CSS filters (brightness/contrast/saturation/blur) are applied reactively via
  * a Zustand subscription so VideoItem doesn't need to re-render on every playback frame.
+ *
+ * IMPORTANT: canvasW/canvasH must NOT be passed as props to VideoItem.
+ * Passing them causes re-renders → inline ref callbacks fire null+el → MediaEngine
+ * loses video element registration mid-playback → freeze/stutter/stuck symptoms.
+ * Canvas size is read imperatively from the wrapper's parent element instead.
  */
 
 import { memo, useEffect, useRef } from 'react';
@@ -33,18 +38,28 @@ const EFFECT_FILTERS: Record<string, string> = {
 /** Build a CSS filter string from clip adjustment properties and effect/filterCss */
 function buildFilter(clip: Clip): string {
   const parts: string[] = [];
-  // Named effect takes priority
-  if (clip.effect && EFFECT_FILTERS[clip.effect]) {
-    return EFFECT_FILTERS[clip.effect];
-  }
-  // Filter preset (raw CSS string from filter panel)
+  if (clip.effect && EFFECT_FILTERS[clip.effect]) return EFFECT_FILTERS[clip.effect];
   if (clip.filterCss) return clip.filterCss;
-  // Manual adjustments
   if (clip.brightness !== undefined && clip.brightness !== 100) parts.push(`brightness(${clip.brightness}%)`);
   if (clip.contrast   !== undefined && clip.contrast   !== 100) parts.push(`contrast(${clip.contrast}%)`);
   if (clip.saturation !== undefined && clip.saturation !== 100) parts.push(`saturate(${clip.saturation}%)`);
   if (clip.blur       !== undefined && clip.blur       !== 0)   parts.push(`blur(${clip.blur}px)`);
   return parts.length ? parts.join(' ') : 'none';
+}
+
+/** Apply overlay position imperatively from clip data + canvas dimensions */
+function applyOverlayPosition(el: HTMLElement, c: Clip, cw: number, ch: number) {
+  const cx  = (c.x ?? 0.5) * cw;
+  const cy  = (c.y ?? 0.5) * ch;
+  const sw  = (c.scaleX ?? 1.0) * cw;
+  const sh  = (c.scaleY ?? 1.0) * ch;
+  const rot = c.rotation ?? 0;
+  el.style.inset     = 'unset';
+  el.style.left      = `${cx - sw / 2}px`;
+  el.style.top       = `${cy - sh / 2}px`;
+  el.style.width     = `${sw}px`;
+  el.style.height    = `${sh}px`;
+  el.style.transform = `rotate(${rot}deg) translateZ(0)`;
 }
 
 interface VideoLayerProps {
@@ -53,13 +68,14 @@ interface VideoLayerProps {
   onVideoRef: (clipId: string, el: HTMLVideoElement | null) => void;
   onWrapperRef: (clipId: string, el: HTMLDivElement | null) => void;
   mainTrackId: string | undefined;
-  canvasW?: number;
-  canvasH?: number;
+  /** Canvas pixel dimensions — passed as refs (not props) to avoid VideoItem re-renders */
+  canvasSizeRef: React.MutableRefObject<{ w: number; h: number }>;
 }
 
 /**
- * Single video wrapper — memoised so it only re-renders when clip identity or filter changes.
- * CSS filters are subscribed reactively so a playing video doesn't force React re-renders.
+ * Single video wrapper — memoised so it NEVER re-renders after mount.
+ * All updates (filter, opacity, position) are applied imperatively via subscriptions.
+ * onVideoRef/onWrapperRef callbacks must be stable (useCallback in parent).
  */
 const VideoItem = memo(function VideoItem({
   clip,
@@ -67,91 +83,60 @@ const VideoItem = memo(function VideoItem({
   isOverlay,
   onVideoRef,
   onWrapperRef,
-  canvasW,
-  canvasH,
+  canvasSizeRef,
 }: {
   clip: Clip;
   media: MediaItem | undefined;
   isOverlay: boolean;
   onVideoRef: (clipId: string, el: HTMLVideoElement | null) => void;
   onWrapperRef: (clipId: string, el: HTMLDivElement | null) => void;
-  canvasW?: number;
-  canvasH?: number;
+  canvasSizeRef: React.MutableRefObject<{ w: number; h: number }>;
 }) {
-  const videoElRef  = useRef<HTMLVideoElement | null>(null);
-  const wrapperRef  = useRef<HTMLDivElement | null>(null);
+  const videoElRef = useRef<HTMLVideoElement | null>(null);
+  const wrapperRef = useRef<HTMLDivElement | null>(null);
 
-  // Subscribe to filter/opacity/position changes and apply them imperatively.
-  // This avoids React re-renders on every slider move or drag update.
   useEffect(() => {
     const applyToVideo = (c: Clip) => {
       const el = videoElRef.current;
-      if (el) {
-        el.style.filter  = buildFilter(c);
-        el.style.opacity = String(c.opacity ?? 1);
-      }
-    };
-
-    const applyToWrapper = (c: Clip, cw: number, ch: number) => {
-      const el = wrapperRef.current;
       if (!el) return;
-      if (isOverlay) {
-        // Position the wrapper to match CanvasElement geometry
-        const cx  = (c.x ?? 0.5) * cw;
-        const cy  = (c.y ?? 0.5) * ch;
-        const sw  = (c.scaleX ?? 1.0) * cw;
-        const sh  = (c.scaleY ?? 1.0) * ch;
-        const rot = c.rotation ?? 0;
-        el.style.inset     = 'unset';
-        el.style.left      = `${cx - sw / 2}px`;
-        el.style.top       = `${cy - sh / 2}px`;
-        el.style.width     = `${sw}px`;
-        el.style.height    = `${sh}px`;
-        el.style.transform = `rotate(${rot}deg) translateZ(0)`;
-      }
-      // Main track always inset:0 (no repositioning)
+      el.style.filter  = buildFilter(c);
+      el.style.opacity = String(c.opacity ?? 1);
     };
 
-    applyToVideo(clip);
-    if (canvasW && canvasH) applyToWrapper(clip, canvasW, canvasH);
+    const applyPosition = (c: Clip) => {
+      const el = wrapperRef.current;
+      if (!el || !isOverlay) return;
+      const { w: cw, h: ch } = canvasSizeRef.current;
+      if (cw && ch) applyOverlayPosition(el, c, cw, ch);
+    };
 
+    // Apply immediately on mount
+    applyToVideo(clip);
+    applyPosition(clip);
+
+    // Subscribe to store — re-apply on any clip property change
     const unsub = useEditorStore.subscribe((state) => {
       const updated = state.project.tracks.flatMap((t) => t.clips).find((c) => c.id === clip.id);
       if (updated) {
         applyToVideo(updated);
-        const cw = canvasW ?? wrapperRef.current?.parentElement?.clientWidth ?? 0;
-        const ch = canvasH ?? wrapperRef.current?.parentElement?.clientHeight ?? 0;
-        if (cw && ch) applyToWrapper(updated, cw, ch);
+        applyPosition(updated);
       }
     });
     return unsub;
+  // clip.id + isOverlay are stable for the lifetime of this component
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [clip.id, isOverlay]);
-
-  // Re-apply position when canvas size changes (window resize, aspect ratio change)
-  useEffect(() => {
-    if (!isOverlay || !canvasW || !canvasH) return;
-    const el = wrapperRef.current;
-    if (!el) return;
-    const cx  = (clip.x ?? 0.5) * canvasW;
-    const cy  = (clip.y ?? 0.5) * canvasH;
-    const sw  = (clip.scaleX ?? 1.0) * canvasW;
-    const sh  = (clip.scaleY ?? 1.0) * canvasH;
-    const rot = clip.rotation ?? 0;
-    el.style.inset     = 'unset';
-    el.style.left      = `${cx - sw / 2}px`;
-    el.style.top       = `${cy - sh / 2}px`;
-    el.style.width     = `${sw}px`;
-    el.style.height    = `${sh}px`;
-    el.style.transform = `rotate(${rot}deg) translateZ(0)`;
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [canvasW, canvasH, isOverlay]);
 
   return (
     <div
       ref={(el) => {
         wrapperRef.current = el;
         onWrapperRef(clip.id, el);
+        // Apply initial overlay position imperatively on mount (before any subscription fires)
+        if (el && isOverlay) {
+          const { w: cw, h: ch } = canvasSizeRef.current;
+          if (cw && ch) applyOverlayPosition(el, clip, cw, ch);
+        }
       }}
       style={{
         // IMPORTANT: Start hidden via opacity, NOT display:none.
@@ -164,11 +149,9 @@ const VideoItem = memo(function VideoItem({
         // Main-track: fill canvas. Overlay: positioned dynamically via subscription above.
         ...(isOverlay ? {} : { inset: 0 }),
         zIndex: isOverlay ? 12 : 10,
-        // Force GPU compositor layer promotion immediately on mount.
         willChange: 'opacity, transform',
         transform: 'translateZ(0)',
         pointerEvents: 'none',
-        // Overflow hidden so video doesn't bleed outside bounds
         overflow: isOverlay ? 'hidden' : undefined,
         borderRadius: isOverlay ? 4 : undefined,
       }}
@@ -178,7 +161,6 @@ const VideoItem = memo(function VideoItem({
           ref={(el) => {
             videoElRef.current = el;
             onVideoRef(clip.id, el);
-            // Apply filter immediately on ref assignment
             if (el) el.style.filter = buildFilter(clip);
           }}
           src={`${media.src}#${clip.id}`}
@@ -191,7 +173,7 @@ const VideoItem = memo(function VideoItem({
           }}
           playsInline
           preload="auto"
-          muted // starts muted; MediaEngine unmutes after user gesture
+          muted
         />
       ) : media?.type === 'image' ? (
         <img
@@ -201,7 +183,6 @@ const VideoItem = memo(function VideoItem({
           style={{ pointerEvents: 'none' }}
         />
       ) : (
-        /* No media yet — placeholder */
         <div
           className="w-full h-full flex items-center justify-center"
           style={{
@@ -221,8 +202,7 @@ export const VideoLayer = memo(function VideoLayer({
   onVideoRef,
   onWrapperRef,
   mainTrackId,
-  canvasW,
-  canvasH,
+  canvasSizeRef,
 }: VideoLayerProps) {
   return (
     <>
@@ -242,8 +222,7 @@ export const VideoLayer = memo(function VideoLayer({
             isOverlay={isOverlay}
             onVideoRef={onVideoRef}
             onWrapperRef={onWrapperRef}
-            canvasW={canvasW}
-            canvasH={canvasH}
+            canvasSizeRef={canvasSizeRef}
           />
         );
       })}

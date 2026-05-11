@@ -62,6 +62,11 @@ export default function PreviewCanvas() {
   const [canvasSize, setCanvasSize] = useState({ w: 640, h: 360 });
   const containerRef = useRef<HTMLDivElement>(null);
 
+  // canvasSizeRef — passed to VideoLayer/OverlayLayer so they can read canvas
+  // dimensions imperatively WITHOUT receiving them as props (which would cause
+  // VideoItem re-renders → ref callbacks fire → MediaEngine loses video els).
+  const canvasSizeRef = useRef({ w: 640, h: 360 });
+
   useEffect(() => {
     const update = () => {
       const el = containerRef.current; if (!el) return;
@@ -70,7 +75,10 @@ export default function PreviewCanvas() {
       const ratio = aspectRatio.h / aspectRatio.w;
       let w = maxW, h = w * ratio;
       if (h > maxH) { h = maxH; w = h / ratio; }
-      setCanvasSize({ w: Math.floor(w), h: Math.floor(h) });
+      const newW = Math.floor(w);
+      const newH = Math.floor(h);
+      canvasSizeRef.current = { w: newW, h: newH };
+      setCanvasSize({ w: newW, h: newH });
     };
     update();
     const obs = new ResizeObserver(update);
@@ -207,8 +215,7 @@ export default function PreviewCanvas() {
               onVideoRef={onVideoRef}
               onWrapperRef={onWrapperRef}
               mainTrackId={mainVideoTrack?.id}
-              canvasW={canvasSize.w}
-              canvasH={canvasSize.h}
+              canvasSizeRef={canvasSizeRef}
             />
 
             {/*
