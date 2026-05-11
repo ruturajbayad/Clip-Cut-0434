@@ -1,17 +1,19 @@
 import { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { X, Download, CheckCircle, Loader2 } from 'lucide-react';
-import { useEditorStore, type Clip } from '../../store/editorStore';
+import { useEditorStore, interpolateClip, type Clip } from '../../store/editorStore';
 import { useShallow } from 'zustand/react/shallow';
+import { TRANSITION_DURATION } from '../player/TransitionOverlay';
 
+// ─── Resolution options (height-based; width computed from aspect ratio) ───────
 const RESOLUTIONS = [
-  { label: '720p HD',   value: '720p',  w: 1280, h: 720  },
-  { label: '1080p FHD', value: '1080p', w: 1920, h: 1080 },
-  { label: '4K UHD',   value: '4k',    w: 3840, h: 2160 },
+  { label: '720p',  h: 720  },
+  { label: '1080p', h: 1080 },
+  { label: '4K',    h: 2160 },
 ];
 
-const FORMATS    = ['MP4', 'WebM'] as const;
-const FPS_OPTIONS = [24, 30, 60]  as const;
+const FORMATS     = ['MP4', 'WebM'] as const;
+const FPS_OPTIONS = [24, 30, 60]   as const;
 
 type ExportStatus = 'idle' | 'exporting' | 'done';
 
@@ -43,7 +45,7 @@ const EFFECT_FILTERS: Record<string, string> = {
 };
 
 function buildFilter(clip: Clip): string {
-  if (clip.effect && EFFECT_FILTERS[clip.effect]) return EFFECT_FILTERS[clip.effect];
+  if (clip.effect && EFFECT_FILTERS[clip.effect]) return EFFECT_FILTERS[clip.effect]!;
   if (clip.filterCss) return clip.filterCss;
   const parts: string[] = [];
   if (clip.brightness !== undefined && clip.brightness !== 100) parts.push(`brightness(${clip.brightness}%)`);
@@ -53,32 +55,16 @@ function buildFilter(clip: Clip): string {
   return parts.join(' ') || 'none';
 }
 
-/** Wait for a video element to finish seeking */
-function waitForSeeked(el: HTMLVideoElement, timeoutMs = 500): Promise<void> {
+/** Wait for video to finish seeking to a new position */
+function waitForSeeked(el: HTMLVideoElement, timeoutMs = 2000): Promise<void> {
   return new Promise((resolve) => {
-    if (!isFinite(el.duration) || el.readyState >= 2) {
-      resolve(); return;
-    }
-    const tid = setTimeout(resolve, timeoutMs);
-    const cb  = () => { clearTimeout(tid); el.removeEventListener('seeked', cb); resolve(); };
-    el.addEventListener('seeked', cb, { once: true });
+    const tid = window.setTimeout(resolve, timeoutMs);
+    const done = () => { clearTimeout(tid); resolve(); };
+    el.addEventListener('seeked', done, { once: true });
   });
 }
 
-/** Resolve text-shadow preset key → CSS */
-function resolveTextShadow(ts: string | undefined, color: string): string | undefined {
-  if (!ts || ts === 'none') return undefined;
-  if (ts === 'soft')  return '0 2px 8px rgba(0,0,0,0.6)';
-  if (ts === 'hard')  return '2px 2px 0px rgba(0,0,0,0.9)';
-  if (ts === 'glow')  return `0 0 12px ${color}, 0 0 24px ${color}`;
-  if (ts === 'neon')  return `0 0 6px #fff, 0 0 12px ${color}, 0 0 30px ${color}`;
-  return ts; // raw CSS
-}
-
-/**
- * Preload an <img> src and return the HTMLImageElement.
- * Returns null on failure so callers can skip gracefully.
- */
+/** Preload image, returns element or null */
 function preloadImage(src: string): Promise<HTMLImageElement | null> {
   return new Promise((resolve) => {
     const img = new Image();
@@ -89,104 +75,122 @@ function preloadImage(src: string): Promise<HTMLImageElement | null> {
   });
 }
 
-// ─── canvas text drawing ───────────────────────────────────────────────────────
+/** Resolve text-shadow preset → CSS */
+function resolveTextShadow(ts: string | undefined, color: string): string | undefined {
+  if (!ts || ts === 'none') return undefined;
+  if (ts === 'soft')  return '0 2px 8px rgba(0,0,0,0.6)';
+  if (ts === 'hard')  return '2px 2px 0px rgba(0,0,0,0.9)';
+  if (ts === 'glow')  return `0 0 12px ${color}, 0 0 24px ${color}`;
+  if (ts === 'neon')  return `0 0 6px #fff, 0 0 12px ${color}, 0 0 30px ${color}`;
+  return ts;
+}
+
 /**
- * Draw a text clip onto the export canvas.
- * Mirrors OverlayLayer logic exactly: position = (x * W, y * H) center,
- * size = (scaleX * W, scaleY * H).
+ * Compute entry-transition opacity/transform progress for a clip at exportTime.
+ * Returns { opacity, transform } strings to apply on the canvas element.
  */
+function getEntryTransitionState(clip: Clip, exportTime: number): { alpha: number; offsetX: number; offsetY: number; scale: number } {
+  const ENTRY_DUR = 0.5;
+  const entry = clip.entryTransition ?? 'none';
+  if (entry === 'none') return { alpha: 1, offsetX: 0, offsetY: 0, scale: 1 };
+  const elapsed = exportTime - clip.startTime;
+  if (elapsed >= ENTRY_DUR) return { alpha: 1, offsetX: 0, offsetY: 0, scale: 1 };
+  const t = Math.max(0, Math.min(1, elapsed / ENTRY_DUR));
+  switch (entry) {
+    case 'fade-in':   return { alpha: t, offsetX: 0, offsetY: 0, scale: 1 };
+    case 'slide-up':  return { alpha: t, offsetX: 0, offsetY: (1 - t) * 40, scale: 1 };
+    case 'slide-left':return { alpha: t, offsetX: (1 - t) * 60, offsetY: 0, scale: 1 };
+    case 'zoom-in':   return { alpha: t, offsetX: 0, offsetY: 0, scale: 0.6 + t * 0.4 };
+    default:          return { alpha: 1, offsetX: 0, offsetY: 0, scale: 1 };
+  }
+}
+
+// ─── canvas draw helpers ──────────────────────────────────────────────────────
+
 function drawTextClip(
   ctx: CanvasRenderingContext2D,
   clip: Clip,
   exportW: number,
   exportH: number,
+  liveClip: Clip, // keyframe-interpolated
+  exportTime: number,
 ) {
-  const cx    = (clip.x ?? 0.5) * exportW;
-  const cy    = (clip.y ?? 0.5) * exportH;
-  const sw    = (clip.scaleX ?? 1.0) * exportW;
-  const sh    = (clip.scaleY ?? 1.0) * exportH;
+  const cx    = (liveClip.x ?? 0.5) * exportW;
+  const cy    = (liveClip.y ?? 0.5) * exportH;
+  const sw    = (liveClip.scaleX ?? 1.0) * exportW;
+  const sh    = (liveClip.scaleY ?? 1.0) * exportH;
   const left  = cx - sw / 2;
   const top   = cy - sh / 2;
 
-  // Same font-size scaling as OverlayLayer (canvasW / 1920)
-  const baseFontSize = Math.max(10, (clip.fontSize || 72) * exportW / 1920);
-  const fontWeight   = clip.fontWeight || 'bold';
-  const fontStyle    = clip.fontStyle  || 'normal';
-  const fontFamily   = clip.fontFamily || 'Inter, Arial, sans-serif';
-  const color        = clip.color      || '#FFFFFF';
-  const textAlign    = clip.textAlign  || 'center';
-  const rawText      = clip.text       || '';
-  const displayText  = clip.textUppercase ? rawText.toUpperCase() : rawText;
-  const letterSpacing = clip.letterSpacing ? clip.letterSpacing * exportW / 1920 : 0;
-  const lineHeight   = clip.lineHeight || 1.2;
+  const baseFontSize  = Math.max(10, (liveClip.fontSize || 72) * exportW / 1920);
+  const fontWeight    = liveClip.fontWeight || 'bold';
+  const fontStyle     = liveClip.fontStyle  || 'normal';
+  const fontFamily    = liveClip.fontFamily || 'Inter, Arial, sans-serif';
+  const color         = liveClip.color      || '#FFFFFF';
+  const textAlign     = liveClip.textAlign  || 'center';
+  const rawText       = liveClip.text       || '';
+  const displayText   = liveClip.textUppercase ? rawText.toUpperCase() : rawText;
+  const letterSpacing = liveClip.letterSpacing ? liveClip.letterSpacing * exportW / 1920 : 0;
+  const lineHeight    = liveClip.lineHeight || 1.2;
+
+  const { alpha, offsetX, offsetY } = getEntryTransitionState(clip, exportTime);
+  const baseOpacity = liveClip.opacity ?? 1;
 
   ctx.save();
 
-  // Clip to the text box bounds (prevents overflow)
   ctx.beginPath();
-  ctx.rect(left, top, sw, sh);
+  ctx.rect(left + offsetX, top + offsetY, sw, sh);
   ctx.clip();
 
-  // Rotation
-  if (clip.rotation) {
-    ctx.translate(cx, cy);
-    ctx.rotate((clip.rotation * Math.PI) / 180);
-    ctx.translate(-cx, -cy);
+  if (liveClip.rotation) {
+    ctx.translate(cx + offsetX, cy + offsetY);
+    ctx.rotate((liveClip.rotation * Math.PI) / 180);
+    ctx.translate(-(cx + offsetX), -(cy + offsetY));
   }
 
-  // Opacity
-  ctx.globalAlpha = clip.opacity ?? 1;
+  ctx.globalAlpha = baseOpacity * alpha;
 
-  // Text background box
-  if (clip.textBackground && clip.textBackground !== 'transparent') {
-    ctx.fillStyle = clip.textBackground;
+  if (liveClip.textBackground && liveClip.textBackground !== 'transparent') {
+    ctx.fillStyle = liveClip.textBackground;
     ctx.beginPath();
-    ctx.roundRect(left, top, sw, sh, 4);
+    ctx.roundRect(left + offsetX, top + offsetY, sw, sh, 4);
     ctx.fill();
   }
 
-  // Font
   ctx.font = `${fontStyle} ${fontWeight} ${baseFontSize}px ${fontFamily}`;
   ctx.fillStyle = color;
   ctx.textBaseline = 'middle';
   ctx.textAlign = textAlign as CanvasTextAlign;
 
-  // Text shadow
-  const ts = resolveTextShadow(clip.textShadow, color);
+  const ts = resolveTextShadow(liveClip.textShadow, color);
   if (ts) {
-    // Parse first shadow from CSS string (e.g. "0 2px 8px rgba(0,0,0,0.6)")
     const m = ts.match(/(-?[\d.]+)px\s+(-?[\d.]+)px\s+(-?[\d.]+)px\s+(.+)/);
     if (m) {
-      ctx.shadowOffsetX = parseFloat(m[1]);
-      ctx.shadowOffsetY = parseFloat(m[2]);
-      ctx.shadowBlur    = parseFloat(m[3]);
-      ctx.shadowColor   = m[4];
+      ctx.shadowOffsetX = parseFloat(m[1]!);
+      ctx.shadowOffsetY = parseFloat(m[2]!);
+      ctx.shadowBlur    = parseFloat(m[3]!);
+      ctx.shadowColor   = m[4]!;
     }
   }
 
-  // Outline (stroke)
-  if (clip.textOutline && clip.textOutlineWidth) {
-    ctx.strokeStyle   = clip.textOutline;
-    ctx.lineWidth     = clip.textOutlineWidth * exportW / 1920;
-    ctx.lineJoin      = 'round';
+  if (liveClip.textOutline && liveClip.textOutlineWidth) {
+    ctx.strokeStyle = liveClip.textOutline;
+    ctx.lineWidth   = liveClip.textOutlineWidth * exportW / 1920;
+    ctx.lineJoin    = 'round';
   }
 
-  // X position based on alignment
-  let textX: number;
   const padding = 8 * exportW / 1920;
-  if (textAlign === 'left')  textX = left + padding;
-  else if (textAlign === 'right') textX = left + sw - padding;
-  else textX = cx; // center
+  let textX: number;
+  if (textAlign === 'left')       textX = left + offsetX + padding;
+  else if (textAlign === 'right') textX = left + offsetX + sw - padding;
+  else                            textX = cx + offsetX;
 
-  // Handle multi-line text + letter-spacing
-  const lines = displayText.split('\n');
-  const totalH = lines.length * baseFontSize * lineHeight;
-  let lineY = cy - totalH / 2 + (baseFontSize * lineHeight) / 2;
+  const lines   = displayText.split('\n');
+  const totalH  = lines.length * baseFontSize * lineHeight;
+  let lineY     = cy + offsetY - totalH / 2 + (baseFontSize * lineHeight) / 2;
 
   for (const line of lines) {
     if (letterSpacing > 0) {
-      // Draw character by character for letter-spacing
-      // Measure total line width first
       const chars = line.split('');
       const totalLineW = chars.reduce((sum, ch) => sum + ctx.measureText(ch).width + letterSpacing, 0);
       let charX = textAlign === 'center'
@@ -195,16 +199,12 @@ function drawTextClip(
         ? textX - totalLineW
         : textX;
       for (const ch of chars) {
-        if (clip.textOutlineWidth && clip.textOutline) {
-          ctx.strokeText(ch, charX, lineY);
-        }
+        if (liveClip.textOutlineWidth && liveClip.textOutline) ctx.strokeText(ch, charX, lineY);
         ctx.fillText(ch, charX, lineY);
         charX += ctx.measureText(ch).width + letterSpacing;
       }
     } else {
-      if (clip.textOutlineWidth && clip.textOutline) {
-        ctx.strokeText(line, textX, lineY);
-      }
+      if (liveClip.textOutlineWidth && liveClip.textOutline) ctx.strokeText(line, textX, lineY);
       ctx.fillText(line, textX, lineY);
     }
     lineY += baseFontSize * lineHeight;
@@ -213,67 +213,55 @@ function drawTextClip(
   ctx.restore();
 }
 
-/**
- * Draw an image clip onto the export canvas.
- * Uses the same position/scale math as OverlayLayer.
- */
 function drawImageClip(
   ctx: CanvasRenderingContext2D,
   clip: Clip,
   img: HTMLImageElement,
   exportW: number,
   exportH: number,
+  liveClip: Clip,
+  exportTime: number,
 ) {
-  const cx   = (clip.x ?? 0.5) * exportW;
-  const cy   = (clip.y ?? 0.5) * exportH;
-  const sw   = (clip.scaleX ?? 1.0) * exportW;
-  const sh   = (clip.scaleY ?? 1.0) * exportH;
+  const cx = (liveClip.x ?? 0.5) * exportW;
+  const cy = (liveClip.y ?? 0.5) * exportH;
+  const sw = (liveClip.scaleX ?? 1.0) * exportW;
+  const sh = (liveClip.scaleY ?? 1.0) * exportH;
+
+  const { alpha, offsetX, offsetY, scale } = getEntryTransitionState(clip, exportTime);
+  const baseOpacity = liveClip.opacity ?? 1;
 
   ctx.save();
+  ctx.globalAlpha = baseOpacity * alpha;
 
-  ctx.globalAlpha = clip.opacity ?? 1;
-
-  // Apply CSS filters (cannot do blur in canvas ctx easily, but brightness/contrast/sat work)
-  const filt = buildFilter(clip);
+  const filt = buildFilter(liveClip);
   if (filt && filt !== 'none') {
-    // @ts-ignore — ctx.filter is standard but TS types lag
+    // @ts-ignore
     ctx.filter = filt;
   }
 
-  if (clip.rotation) {
-    ctx.translate(cx, cy);
-    ctx.rotate((clip.rotation * Math.PI) / 180);
-    ctx.translate(-cx, -cy);
+  const acx = cx + offsetX;
+  const acy = cy + offsetY;
+
+  if (liveClip.rotation) {
+    ctx.translate(acx, acy);
+    ctx.rotate((liveClip.rotation * Math.PI) / 180);
+    ctx.translate(-acx, -acy);
   }
 
-  // Blend mode
-  if (clip.blendMode && clip.blendMode !== 'normal') {
-    ctx.globalCompositeOperation = clip.blendMode as GlobalCompositeOperation;
+  if (liveClip.blendMode && liveClip.blendMode !== 'normal') {
+    ctx.globalCompositeOperation = liveClip.blendMode as GlobalCompositeOperation;
   }
 
-  // object-fit: contain — maintain aspect ratio
-  const imgAR  = img.naturalWidth / img.naturalHeight;
-  const boxAR  = sw / sh;
+  const imgAR = img.naturalWidth / img.naturalHeight;
+  const boxAR = sw / sh;
   let drawW: number, drawH: number;
-  if (imgAR > boxAR) {
-    drawW = sw;
-    drawH = sw / imgAR;
-  } else {
-    drawH = sh;
-    drawW = sh * imgAR;
-  }
-  const drawX = cx - drawW / 2;
-  const drawY = cy - drawH / 2;
+  if (imgAR > boxAR) { drawW = sw * scale; drawH = (sw / imgAR) * scale; }
+  else               { drawH = sh * scale; drawW = (sh * imgAR) * scale; }
 
-  ctx.drawImage(img, drawX, drawY, drawW, drawH);
+  ctx.drawImage(img, acx - drawW / 2, acy - drawH / 2, drawW, drawH);
   ctx.restore();
 }
 
-/**
- * Draw a video clip onto the export canvas.
- * The wrapper element is positioned by OverlayLayer (overlay clips)
- * or fills the canvas (main track clips).
- */
 function drawVideoClip(
   ctx: CanvasRenderingContext2D,
   clip: Clip,
@@ -281,48 +269,165 @@ function drawVideoClip(
   exportW: number,
   exportH: number,
   isMainTrack: boolean,
+  liveClip: Clip,
+  exportTime: number,
 ) {
-  const filt = buildFilter(clip);
+  const { alpha, offsetX, offsetY, scale } = getEntryTransitionState(clip, exportTime);
+  const baseOpacity = liveClip.opacity ?? 1;
+
   ctx.save();
-  ctx.globalAlpha = clip.opacity ?? 1;
+  ctx.globalAlpha = baseOpacity * alpha;
+
+  const filt = buildFilter(liveClip);
   if (filt && filt !== 'none') {
     // @ts-ignore
     ctx.filter = filt;
   }
 
+  if (liveClip.blendMode && liveClip.blendMode !== 'normal') {
+    ctx.globalCompositeOperation = liveClip.blendMode as GlobalCompositeOperation;
+  }
+
   if (isMainTrack) {
-    // object-fit: cover
+    // object-fit: cover — fills canvas
     const vidAR = vid.videoWidth  / (vid.videoHeight || 1);
     const boxAR = exportW / exportH;
     let drawW: number, drawH: number, drawX: number, drawY: number;
-    if (vidAR > boxAR) {
-      drawH = exportH; drawW = exportH * vidAR;
-    } else {
-      drawW = exportW; drawH = exportW / vidAR;
-    }
-    drawX = (exportW - drawW) / 2;
-    drawY = (exportH - drawH) / 2;
-    ctx.drawImage(vid, drawX, drawY, drawW, drawH);
+    if (vidAR > boxAR) { drawH = exportH; drawW = exportH * vidAR; }
+    else               { drawW = exportW; drawH = exportW / vidAR; }
+    drawX = (exportW - drawW) / 2 + offsetX;
+    drawY = (exportH - drawH) / 2 + offsetY;
+    ctx.drawImage(vid, drawX, drawY, drawW * scale, drawH * scale);
   } else {
-    // Overlay clip — same position/scale as OverlayLayer CanvasElement
-    const cx  = (clip.x ?? 0.5) * exportW;
-    const cy  = (clip.y ?? 0.5) * exportH;
-    const sw  = (clip.scaleX ?? 1.0) * exportW;
-    const sh  = (clip.scaleY ?? 1.0) * exportH;
+    // Overlay clip — positioned by keyframe-interpolated x/y/scale
+    const cx = (liveClip.x ?? 0.5) * exportW;
+    const cy = (liveClip.y ?? 0.5) * exportH;
+    const sw = (liveClip.scaleX ?? 1.0) * exportW;
+    const sh = (liveClip.scaleY ?? 1.0) * exportH;
+    const acx = cx + offsetX;
+    const acy = cy + offsetY;
 
-    if (clip.rotation) {
-      ctx.translate(cx, cy);
-      ctx.rotate((clip.rotation * Math.PI) / 180);
-      ctx.translate(-cx, -cy);
+    if (liveClip.rotation) {
+      ctx.translate(acx, acy);
+      ctx.rotate((liveClip.rotation * Math.PI) / 180);
+      ctx.translate(-acx, -acy);
     }
 
     // object-fit: contain
     const vidAR = vid.videoWidth  / (vid.videoHeight || 1);
     const boxAR = sw / sh;
     let drawW: number, drawH: number;
-    if (vidAR > boxAR) { drawW = sw; drawH = sw / vidAR; }
-    else                { drawH = sh; drawW = sh * vidAR; }
-    ctx.drawImage(vid, cx - drawW / 2, cy - drawH / 2, drawW, drawH);
+    if (vidAR > boxAR) { drawW = sw * scale; drawH = (sw / vidAR) * scale; }
+    else               { drawH = sh * scale; drawW = (sh * vidAR) * scale; }
+
+    ctx.drawImage(vid, acx - drawW / 2, acy - drawH / 2, drawW, drawH);
+  }
+
+  ctx.restore();
+}
+
+/**
+ * Draw a clip transition overlay onto the canvas.
+ * Mirrors TransitionOverlay.tsx logic but rendered to canvas 2D context.
+ */
+function drawTransition(
+  ctx: CanvasRenderingContext2D,
+  type: string,
+  progress: number,
+  exportW: number,
+  exportH: number,
+) {
+  const p    = Math.max(0, Math.min(1, progress));
+  const fade = p < 0.5 ? p * 2 : (1 - p) * 2;
+
+  ctx.save();
+
+  switch (type) {
+    case 'fade':
+    default: {
+      ctx.globalAlpha = fade;
+      ctx.fillStyle   = '#000000';
+      ctx.fillRect(0, 0, exportW, exportH);
+      break;
+    }
+    case 'dissolve': {
+      // Simulate dissolve with radial gradients
+      const na = fade * 0.9;
+      const grd1 = ctx.createRadialGradient(exportW * 0.2, exportH * 0.2, 0, exportW * 0.2, exportH * 0.2, exportW * 0.4);
+      grd1.addColorStop(0, `rgba(0,0,0,${na})`);
+      grd1.addColorStop(1, 'transparent');
+      ctx.globalAlpha = 1;
+      ctx.fillStyle   = grd1;
+      ctx.fillRect(0, 0, exportW, exportH);
+      const grd2 = ctx.createRadialGradient(exportW * 0.8, exportH * 0.4, 0, exportW * 0.8, exportH * 0.4, exportW * 0.35);
+      grd2.addColorStop(0, `rgba(0,0,0,${na * 0.8})`);
+      grd2.addColorStop(1, 'transparent');
+      ctx.fillStyle = grd2;
+      ctx.fillRect(0, 0, exportW, exportH);
+      break;
+    }
+    case 'blur': {
+      // Canvas doesn't support backdrop-filter — approximate with dark fade
+      ctx.globalAlpha = fade * 0.6;
+      ctx.fillStyle   = '#000000';
+      ctx.fillRect(0, 0, exportW, exportH);
+      break;
+    }
+    case 'lightleak': {
+      const grd = ctx.createRadialGradient(exportW * 0.65, exportH * 0.25, 0, exportW * 0.65, exportH * 0.25, exportW * 0.65);
+      grd.addColorStop(0, `rgba(255,210,80,${fade * 0.85})`);
+      grd.addColorStop(1, 'transparent');
+      ctx.globalAlpha = 1;
+      ctx.fillStyle   = grd;
+      ctx.fillRect(0, 0, exportW, exportH);
+      break;
+    }
+    case 'slide-left': {
+      // Shadow overlay to simulate the wipe
+      ctx.globalAlpha = fade * 0.5;
+      const grd = ctx.createLinearGradient(0, 0, exportW, 0);
+      grd.addColorStop(0, 'rgba(0,0,0,0.4)');
+      grd.addColorStop(1, 'rgba(0,0,0,0.1)');
+      ctx.fillStyle = grd;
+      ctx.fillRect(0, 0, exportW * (1 - p), exportH);
+      break;
+    }
+    case 'zoom': {
+      ctx.globalAlpha = fade * 0.45;
+      ctx.fillStyle   = '#000000';
+      ctx.fillRect(0, 0, exportW, exportH);
+      break;
+    }
+    case 'glitch': {
+      // Simple glitch lines
+      ctx.globalAlpha = fade * 0.3;
+      for (let i = 0; i < 8; i++) {
+        ctx.fillStyle = i % 2 === 0 ? 'rgba(255,0,0,0.3)' : 'rgba(0,255,255,0.2)';
+        const y = (i / 8) * exportH + Math.sin(p * 40 + i) * 10;
+        ctx.fillRect(0, y, exportW, exportH * 0.015);
+      }
+      break;
+    }
+    case 'cinematic': {
+      const barH = fade * 0.14 * exportH;
+      ctx.globalAlpha = 0.95;
+      ctx.fillStyle   = '#000000';
+      ctx.fillRect(0, 0, exportW, barH);
+      ctx.fillRect(0, exportH - barH, exportW, barH);
+      ctx.globalAlpha = fade * 0.3;
+      ctx.fillRect(0, 0, exportW, exportH);
+      break;
+    }
+    case 'whip': {
+      // Speed streaks
+      for (let i = 0; i < 6; i++) {
+        const yPos = ([0.1, 0.28, 0.45, 0.62, 0.78, 0.9][i] ?? 0) * exportH;
+        ctx.globalAlpha = fade * (0.06 + (i % 2) * 0.04);
+        ctx.fillStyle   = '#ffffff';
+        ctx.fillRect(0, yPos, exportW, exportH * 0.015 * (1 + (i % 3)));
+      }
+      break;
+    }
   }
 
   ctx.restore();
@@ -335,6 +440,7 @@ export default function ExportModal() {
     showExportModal, setShowExportModal,
     project, mediaLibrary,
     setCurrentTime, setIsPlaying,
+    canvasAspectRatio,
   } = useEditorStore(useShallow((s) => ({
     showExportModal:    s.showExportModal,
     setShowExportModal: s.setShowExportModal,
@@ -342,9 +448,10 @@ export default function ExportModal() {
     mediaLibrary:       s.mediaLibrary,
     setCurrentTime:     s.setCurrentTime,
     setIsPlaying:       s.setIsPlaying,
+    canvasAspectRatio:  s.canvasAspectRatio,
   })));
 
-  const [resolution, setResolution] = useState(RESOLUTIONS[1]);
+  const [resolution, setResolution] = useState<typeof RESOLUTIONS[number]>(RESOLUTIONS[1]!);
   const [format,     setFormat]     = useState<typeof FORMATS[number]>('MP4');
   const [fps,        setFps]        = useState<typeof FPS_OPTIONS[number]>(30);
   const [bitrate,    setBitrate]    = useState(8);
@@ -352,10 +459,14 @@ export default function ExportModal() {
   const [progress,   setProgress]   = useState(0);
   const [errorMsg,   setErrorMsg]   = useState<string | null>(null);
   const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
-  const [fileName,    setFileName]   = useState('export.webm');
+  const [fileName,    setFileName]   = useState('export.mp4');
 
   const cancelRef   = useRef(false);
   const recorderRef = useRef<MediaRecorder | null>(null);
+
+  // Compute export dimensions from selected resolution height + canvas aspect ratio
+  const exportH = resolution.h;
+  const exportW = Math.round(exportH * (canvasAspectRatio.w / canvasAspectRatio.h));
 
   useEffect(() => {
     if (!showExportModal) {
@@ -378,9 +489,6 @@ export default function ExportModal() {
     cancelRef.current = false;
 
     try {
-      const exportW = resolution.w;
-      const exportH = resolution.h;
-
       // ── 1. Create offscreen canvas ─────────────────────────────────────────
       const canvas  = document.createElement('canvas');
       canvas.width  = exportW;
@@ -409,33 +517,26 @@ export default function ExportModal() {
 
       // ── 3. Pause real playback ─────────────────────────────────────────────
       setIsPlaying(false);
+      await new Promise((r) => setTimeout(r, 100)); // let engine settle
 
-      // ── 4. Get all clips from store ────────────────────────────────────────
-      const allClips  = project.tracks.flatMap((t) => t.clips);
-      const mainTrack = project.tracks.find((t) => t.type === 'video');
-
+      // ── 4. Get all clips ───────────────────────────────────────────────────
+      const allClips   = project.tracks.flatMap((t) => t.clips);
+      const mainTrack  = project.tracks.find((t) => t.type === 'video');
       const videoClips = allClips.filter((c) => c.type === 'video');
       const textClips  = allClips.filter((c) => c.type === 'text');
       const imageClips = allClips.filter((c) => c.type === 'image');
 
-      // ── 5. Locate live <video> elements from the DOM ───────────────────────
-      // They are rendered in VideoLayer with persistent DOM mounting.
-      // We find them by matching the src attribute which includes clip.id as hash.
+      // ── 5. Locate live <video> elements ────────────────────────────────────
       const previewRoot = document.querySelector<HTMLDivElement>('[data-preview-canvas="root"]');
-
-      // Build clipId → HTMLVideoElement map
-      // VideoLayer sets data-clip-id on every <video> element for reliable lookup.
-      const videoElMap = new Map<string, HTMLVideoElement>();
+      const videoElMap  = new Map<string, HTMLVideoElement>();
       if (previewRoot) {
-        const videoEls = Array.from(previewRoot.querySelectorAll<HTMLVideoElement>('video[data-clip-id]'));
-        for (const vid of videoEls) {
+        for (const vid of previewRoot.querySelectorAll<HTMLVideoElement>('video[data-clip-id]')) {
           const id = vid.dataset.clipId;
           if (id) videoElMap.set(id, vid);
         }
-        // Fallback: match by src hash if data-clip-id not present
+        // Fallback: match by src hash
         if (videoElMap.size === 0) {
-          const allVids = Array.from(previewRoot.querySelectorAll<HTMLVideoElement>('video'));
-          for (const vid of allVids) {
+          for (const vid of previewRoot.querySelectorAll<HTMLVideoElement>('video')) {
             const hash = vid.src.split('#')[1];
             if (hash) videoElMap.set(hash, vid);
           }
@@ -447,99 +548,127 @@ export default function ExportModal() {
       await Promise.all(imageClips.map(async (clip) => {
         const mediaSrc = clip.src
           || (clip.mediaId ? mediaLibrary.find((m) => m.id === clip.mediaId)?.src : undefined);
-        if (mediaSrc) {
-          imageElMap.set(clip.id, await preloadImage(mediaSrc));
-        }
+        if (mediaSrc) imageElMap.set(clip.id, await preloadImage(mediaSrc));
       }));
 
-      // ── 7. Frame loop ──────────────────────────────────────────────────────
+      // ── 7. Warm up all video elements ─────────────────────────────────────
+      // Seek every video to its trim start and wait for readyState >= 2
+      await Promise.all(videoClips.map(async (clip) => {
+        const vid = videoElMap.get(clip.id);
+        if (!vid) return;
+        if (vid.readyState < 1) { vid.load(); }
+        vid.currentTime = clip.trimStart ?? 0;
+        await waitForSeeked(vid, 3000);
+      }));
+
+      // ── 8. Frame loop ──────────────────────────────────────────────────────
       const totalDuration = project.duration;
       const frameInterval = 1 / fps;
       let   exportTime    = 0;
 
       while (exportTime <= totalDuration && !cancelRef.current) {
 
-        // ── 7a. Seek each video clip to the correct source time ──────────────
+        // ── 8a. Resolve live (keyframe-interpolated) clip state ──────────────
+        const liveClipMap = new Map<string, Clip>();
+        for (const clip of allClips) {
+          const interp = interpolateClip(clip, exportTime);
+          const live   = Object.keys(interp).length > 0 ? { ...clip, ...interp } : clip;
+          liveClipMap.set(clip.id, live as Clip);
+        }
+
+        // ── 8b. Seek each active video to its correct source time ────────────
         const seekPromises: Promise<void>[] = [];
 
         for (const clip of videoClips) {
           const isActive = exportTime >= clip.startTime && exportTime < clip.startTime + clip.duration;
-          const vid = videoElMap.get(clip.id);
+          const vid      = videoElMap.get(clip.id);
           if (!vid) continue;
+          if (!isActive) continue;
 
-          if (!isActive) {
-            // Hide off-screen clips during export
-            vid.parentElement && (vid.parentElement.style.opacity = '0');
-            continue;
-          }
-
-          // Compute source time: trimStart + elapsed_in_clip * speed
-          const speed       = clip.speed ?? 1;
-          const trimStart   = clip.trimStart ?? 0;
+          const speed         = clip.speed ?? 1;
+          const trimStart     = clip.trimStart ?? 0;
           const elapsedInClip = (exportTime - clip.startTime) * speed;
-          const targetTime  = trimStart + elapsedInClip;
-          const clampedTime = Math.max(0, Math.min(vid.duration || targetTime, targetTime));
+          const targetTime    = trimStart + elapsedInClip;
+          const clampedTime   = Math.max(0, Math.min(isFinite(vid.duration) ? vid.duration : targetTime, targetTime));
 
-          if (Math.abs(vid.currentTime - clampedTime) > 0.02) {
+          if (Math.abs(vid.currentTime - clampedTime) > 0.015) {
             vid.currentTime = clampedTime;
-            seekPromises.push(waitForSeeked(vid, 400));
+            seekPromises.push(waitForSeeked(vid, 2000));
           }
         }
 
-        // Wait for all seeks to complete
         if (seekPromises.length > 0) await Promise.all(seekPromises);
 
-        // Give browser a frame to decode (rAF settle)
+        // Give browser one rAF to decode the sought frame
         await new Promise<void>((r) => requestAnimationFrame(() => r()));
 
-        // ── 7b. Draw frame ───────────────────────────────────────────────────
+        // ── 8c. Draw frame ───────────────────────────────────────────────────
         ctx.fillStyle = '#000000';
         ctx.fillRect(0, 0, exportW, exportH);
 
-        // Draw main-track video clips first (bottom layer)
+        // Main track video (bottom)
         for (const clip of videoClips) {
           const isActive = exportTime >= clip.startTime && exportTime < clip.startTime + clip.duration;
-          if (!isActive) continue;
+          if (!isActive || clip.trackId !== mainTrack?.id) continue;
           const vid = videoElMap.get(clip.id);
           if (!vid || vid.readyState < 2) continue;
-
-          const isMainTrack = clip.trackId === mainTrack?.id;
-          // Only draw main track here (overlays drawn after text/image — they go on top)
-          if (isMainTrack) {
-            try {
-              drawVideoClip(ctx, clip, vid, exportW, exportH, true);
-            } catch { /* cross-origin / not-ready */ }
-          }
+          const liveClip = liveClipMap.get(clip.id)!;
+          try { drawVideoClip(ctx, clip, vid, exportW, exportH, true, liveClip, exportTime); } catch { /* skip */ }
         }
 
-        // Draw overlay video clips (on top of main but behind text)
+        // Overlay video clips
         for (const clip of videoClips) {
           const isActive = exportTime >= clip.startTime && exportTime < clip.startTime + clip.duration;
-          if (!isActive) continue;
+          if (!isActive || clip.trackId === mainTrack?.id) continue;
           const vid = videoElMap.get(clip.id);
           if (!vid || vid.readyState < 2) continue;
-          const isMainTrack = clip.trackId === mainTrack?.id;
-          if (!isMainTrack) {
-            try {
-              drawVideoClip(ctx, clip, vid, exportW, exportH, false);
-            } catch { /* skip */ }
-          }
+          const liveClip = liveClipMap.get(clip.id)!;
+          try { drawVideoClip(ctx, clip, vid, exportW, exportH, false, liveClip, exportTime); } catch { /* skip */ }
         }
 
-        // Draw image clips
+        // Image clips
         for (const clip of imageClips) {
           const isActive = exportTime >= clip.startTime && exportTime < clip.startTime + clip.duration;
           if (!isActive) continue;
           const img = imageElMap.get(clip.id);
           if (!img) continue;
-          drawImageClip(ctx, clip, img, exportW, exportH);
+          const liveClip = liveClipMap.get(clip.id)!;
+          drawImageClip(ctx, clip, img, exportW, exportH, liveClip, exportTime);
         }
 
-        // Draw text clips (top layer)
+        // Text clips (top layer)
         for (const clip of textClips) {
           const isActive = exportTime >= clip.startTime && exportTime < clip.startTime + clip.duration;
           if (!isActive) continue;
-          drawTextClip(ctx, clip, exportW, exportH);
+          const liveClip = liveClipMap.get(clip.id)!;
+          drawTextClip(ctx, clip, exportW, exportH, liveClip, exportTime);
+        }
+
+        // ── 8d. Clip transitions ─────────────────────────────────────────────
+        // Find any transition happening at this exportTime between two main-track clips
+        if (mainTrack) {
+          const mainClips = mainTrack.clips
+            .filter((c) => c.type === 'video')
+            .sort((a, b) => a.startTime - b.startTime);
+
+          for (let i = 0; i < mainClips.length - 1; i++) {
+            const curr = mainClips[i]!;
+            const next = mainClips[i + 1]!;
+            const tEnd   = curr.startTime + curr.duration;
+            const tStart = tEnd - TRANSITION_DURATION;
+
+            if (exportTime >= tStart && exportTime <= tEnd + TRANSITION_DURATION && curr.transition) {
+              const progress = (exportTime - tStart) / (TRANSITION_DURATION * 2);
+              drawTransition(ctx, curr.transition, progress, exportW, exportH);
+              break;
+            }
+            // Also check if next clip has a transition set
+            if (exportTime >= tEnd && exportTime <= tEnd + TRANSITION_DURATION && next.transition) {
+              const progress = (exportTime - tEnd) / (TRANSITION_DURATION * 2);
+              drawTransition(ctx, next.transition, progress, exportW, exportH);
+              break;
+            }
+          }
         }
 
         exportTime += frameInterval;
@@ -554,7 +683,7 @@ export default function ExportModal() {
         return;
       }
 
-      // ── 8. Finish ─────────────────────────────────────────────────────────
+      // ── 9. Finish ──────────────────────────────────────────────────────────
       recorder.stop();
       stream.getTracks().forEach((t) => t.stop());
 
@@ -627,7 +756,7 @@ export default function ExportModal() {
               </button>
             </div>
 
-            {/* ── Done ─────────────────────────────────────────────────────── */}
+            {/* ── Done ──────────────────────────────────────────────────────── */}
             {status === 'done' ? (
               <div className="p-8 flex flex-col items-center gap-4 text-center">
                 <motion.div
@@ -640,7 +769,7 @@ export default function ExportModal() {
                 <div>
                   <div className="font-semibold text-gray-900 text-lg">Export Complete!</div>
                   <div className="text-sm text-gray-500 mt-1">
-                    {fileName} — click Download to save
+                    {fileName} — {exportW}×{exportH} · {fps}fps
                   </div>
                 </div>
                 <div className="flex items-center gap-2 w-full">
@@ -660,16 +789,14 @@ export default function ExportModal() {
                 </div>
               </div>
 
-            /* ── Exporting ───────────────────────────────────────────────── */
+            /* ── Exporting ──────────────────────────────────────────────────── */
             ) : status === 'exporting' ? (
               <div className="p-8 flex flex-col items-center gap-4 text-center">
-                <div className="relative">
-                  <Loader2 size={40} className="text-blue-500 animate-spin" />
-                </div>
+                <Loader2 size={40} className="text-blue-500 animate-spin" />
                 <div>
                   <div className="font-semibold text-gray-800">Rendering frames…</div>
                   <div className="text-xs text-gray-500 mt-1">
-                    {fps} fps · {resolution.label} · {format}
+                    {exportW}×{exportH} · {fps}fps · {format} · {bitrate}Mbps
                   </div>
                 </div>
                 <div className="w-full">
@@ -685,7 +812,7 @@ export default function ExportModal() {
                     />
                   </div>
                   <div className="text-[11px] text-gray-400 mt-1.5">
-                    Frame-accurate canvas render in progress
+                    Frame-accurate render · keyframes · transitions · effects
                   </div>
                 </div>
                 <button
@@ -696,7 +823,7 @@ export default function ExportModal() {
                 </button>
               </div>
 
-            /* ── Settings ────────────────────────────────────────────────── */
+            /* ── Settings ───────────────────────────────────────────────────── */
             ) : (
               <div className="p-5 space-y-4">
                 {errorMsg && (
@@ -727,7 +854,6 @@ export default function ExportModal() {
                     <button
                       disabled
                       className="flex-1 py-2 text-xs font-medium rounded-lg border-2 border-gray-100 text-gray-300 cursor-not-allowed"
-                      title="GIF not supported in browser"
                     >
                       GIF
                     </button>
@@ -737,23 +863,26 @@ export default function ExportModal() {
                 {/* Resolution */}
                 <div>
                   <label className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide mb-2 block">
-                    Resolution
+                    Resolution <span className="text-gray-400 normal-case font-normal">({canvasAspectRatio.w}:{canvasAspectRatio.h})</span>
                   </label>
                   <div className="grid grid-cols-3 gap-2">
-                    {RESOLUTIONS.map((r) => (
-                      <button
-                        key={r.value}
-                        onClick={() => setResolution(r)}
-                        className={`py-2 text-xs font-medium rounded-lg border-2 transition-all ${
-                          resolution.value === r.value
-                            ? 'border-blue-500 text-blue-600 bg-blue-50'
-                            : 'border-gray-200 text-gray-600 hover:border-gray-300'
-                        }`}
-                      >
-                        <div className="font-bold">{r.label.split(' ')[0]}</div>
-                        <div className="text-[9px] text-gray-400">{r.w}×{r.h}</div>
-                      </button>
-                    ))}
+                    {RESOLUTIONS.map((r) => {
+                      const w = Math.round(r.h * canvasAspectRatio.w / canvasAspectRatio.h);
+                      return (
+                        <button
+                          key={r.label}
+                          onClick={() => setResolution(r)}
+                          className={`py-2 text-xs font-medium rounded-lg border-2 transition-all ${
+                            resolution.label === r.label
+                              ? 'border-blue-500 text-blue-600 bg-blue-50'
+                              : 'border-gray-200 text-gray-600 hover:border-gray-300'
+                          }`}
+                        >
+                          <div className="font-bold">{r.label}</div>
+                          <div className="text-[9px] text-gray-400">{w}×{r.h}</div>
+                        </button>
+                      );
+                    })}
                   </div>
                 </div>
 
@@ -807,19 +936,21 @@ export default function ExportModal() {
                     </span>
                   </div>
                   <div className="flex justify-between">
+                    <span>Dimensions</span>
+                    <span className="font-medium text-gray-700">{exportW}×{exportH}</span>
+                  </div>
+                  <div className="flex justify-between">
                     <span>Duration</span>
-                    <span className="font-medium text-gray-700">{project.duration}s</span>
+                    <span className="font-medium text-gray-700">{project.duration.toFixed(1)}s</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Frames</span>
+                    <span className="font-medium text-gray-700">{Math.round(project.duration * fps)}</span>
                   </div>
                   <div className="flex justify-between">
                     <span>Est. size</span>
                     <span className="font-medium text-gray-700">
                       ~{Math.round((bitrate * project.duration) / 8)} MB
-                    </span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span>Frames</span>
-                    <span className="font-medium text-gray-700">
-                      {Math.round(project.duration * fps)}
                     </span>
                   </div>
                 </div>

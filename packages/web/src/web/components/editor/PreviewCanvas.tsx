@@ -49,14 +49,19 @@ export default function PreviewCanvas() {
   const setIsPlaying    = useEditorStore((s) => s.setIsPlaying);
   const project         = useEditorStore((s) => s.project);
   const mediaLibrary    = useEditorStore((s) => s.mediaLibrary);
-  const selectedClipId  = useEditorStore((s) => s.selectedClipId);
-  const setSelectedClip = useEditorStore((s) => s.setSelectedClip);
+  const selectedClipId        = useEditorStore((s) => s.selectedClipId);
+  const setSelectedClip       = useEditorStore((s) => s.setSelectedClip);
+  const setCanvasAspectRatio  = useEditorStore((s) => s.setCanvasAspectRatio);
 
   // ── MediaEngine ──────────────────────────────────────────────────────────────
   const engineRef = useMediaEngine();
 
   // ── Canvas sizing ────────────────────────────────────────────────────────────
-  const [aspectRatio, setAspectRatio] = useState(ASPECT_RATIOS[0]);
+  const [aspectRatio, setAspectRatioLocal] = useState<typeof ASPECT_RATIOS[number]>(ASPECT_RATIOS[0]!);
+  const setAspectRatio = (ar: typeof ASPECT_RATIOS[number]) => {
+    setAspectRatioLocal(ar);
+    setCanvasAspectRatio({ w: ar.w, h: ar.h });
+  };
   const [showGrid, setShowGrid] = useState(false);
   const [showSafeZones, setShowSafeZones] = useState(false);
   const [canvasSize, setCanvasSize] = useState({ w: 640, h: 360 });
