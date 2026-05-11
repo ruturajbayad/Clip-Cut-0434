@@ -137,15 +137,17 @@ function drawTextClip(
 
   ctx.save();
 
-  ctx.beginPath();
-  ctx.rect(left + offsetX, top + offsetY, sw, sh);
-  ctx.clip();
-
+  // FIX: apply rotation BEFORE clipping so the clip rect rotates with the text
   if (liveClip.rotation) {
     ctx.translate(cx + offsetX, cy + offsetY);
     ctx.rotate((liveClip.rotation * Math.PI) / 180);
     ctx.translate(-(cx + offsetX), -(cy + offsetY));
   }
+
+  // Clip to bounding box AFTER rotation transform is applied
+  ctx.beginPath();
+  ctx.rect(left + offsetX, top + offsetY, sw, sh);
+  ctx.clip();
 
   ctx.globalAlpha = baseOpacity * alpha;
 
@@ -275,15 +277,14 @@ function drawVideoClip(
   // (main video always covers the full canvas)
   const { alpha: entryAlpha, offsetX, offsetY, scale: entryScale } = getEntryTransitionState(clip, exportTime);
 
-  // Only apply keyframe opacity for overlay clips; main track uses clip.opacity or 1
-  const baseOpacity = isMainTrack
-    ? (clip.opacity ?? 1) * entryAlpha
-    : (liveClip.opacity ?? 1) * entryAlpha;
+  // FIX: always use liveClip for opacity + filter so keyframed effects apply to main track too
+  const baseOpacity = (liveClip.opacity ?? 1) * entryAlpha;
 
   ctx.save();
   ctx.globalAlpha = baseOpacity;
 
-  const filt = buildFilter(isMainTrack ? clip : liveClip);
+  // FIX: use liveClip (keyframe-interpolated) for filter on main track
+  const filt = buildFilter(liveClip);
   if (filt && filt !== 'none') {
     // @ts-ignore
     ctx.filter = filt;
@@ -431,6 +432,54 @@ function drawTransition(
   ctx.restore();
 }
 
+// ─── audioBufferToWav ─────────────────────────────────────────────────────────
+/**
+ * Encode an AudioBuffer into a WAV Blob (PCM 16-bit, stereo or mono).
+ * Pure JS — no external deps needed.
+ */
+function audioBufferToWav(buffer: AudioBuffer): Blob {
+  const numChannels = Math.min(2, buffer.numberOfChannels);
+  const sampleRate  = buffer.sampleRate;
+  const numSamples  = buffer.length;
+  const byteRate    = sampleRate * numChannels * 2; // 16-bit = 2 bytes/sample
+  const blockAlign  = numChannels * 2;
+  const dataSize    = numSamples * numChannels * 2;
+  const ab          = new ArrayBuffer(44 + dataSize);
+  const dv          = new DataView(ab);
+
+  // RIFF header
+  dv.setUint8(0, 0x52); dv.setUint8(1, 0x49); dv.setUint8(2, 0x46); dv.setUint8(3, 0x46); // "RIFF"
+  dv.setUint32(4,  36 + dataSize, true);
+  dv.setUint8(8,  0x57); dv.setUint8(9,  0x41); dv.setUint8(10, 0x56); dv.setUint8(11, 0x45); // "WAVE"
+  // fmt chunk
+  dv.setUint8(12, 0x66); dv.setUint8(13, 0x6D); dv.setUint8(14, 0x74); dv.setUint8(15, 0x20); // "fmt "
+  dv.setUint32(16, 16, true);       // chunk size
+  dv.setUint16(20,  1, true);       // PCM = 1
+  dv.setUint16(22, numChannels, true);
+  dv.setUint32(24, sampleRate, true);
+  dv.setUint32(28, byteRate, true);
+  dv.setUint16(32, blockAlign, true);
+  dv.setUint16(34, 16, true);       // bits per sample
+  // data chunk
+  dv.setUint8(36, 0x64); dv.setUint8(37, 0x61); dv.setUint8(38, 0x74); dv.setUint8(39, 0x61); // "data"
+  dv.setUint32(40, dataSize, true);
+
+  // Interleave channel samples
+  let offset = 44;
+  for (let i = 0; i < numSamples; i++) {
+    for (let ch = 0; ch < numChannels; ch++) {
+      const sample = buffer.getChannelData(ch)[i] ?? 0;
+      // Clamp and convert float32 → int16
+      const clamped = Math.max(-1, Math.min(1, sample));
+      const int16   = clamped < 0 ? clamped * 0x8000 : clamped * 0x7FFF;
+      dv.setInt16(offset, int16, true);
+      offset += 2;
+    }
+  }
+
+  return new Blob([ab], { type: 'audio/wav' });
+}
+
 // ─── component ────────────────────────────────────────────────────────────────
 
 export default function ExportModal() {
@@ -534,7 +583,7 @@ export default function ExportModal() {
         vid.src          = mediaSrc;
         vid.crossOrigin  = 'anonymous';
         vid.preload      = 'auto';
-        vid.muted        = false; // unmuted so AudioContext can capture audio
+        vid.muted        = true;  // audio handled via OfflineAudioContext, not captured from element
         vid.playbackRate = clip.speed ?? 1;
         // Keep hidden but in DOM so browser decodes
         vid.style.cssText = 'position:fixed;left:-9999px;top:-9999px;width:1px;height:1px;opacity:0;pointer-events:none';
@@ -543,49 +592,89 @@ export default function ExportModal() {
         videoElMap.set(clip.id, vid);
       }
 
-      // ── 4. Create dedicated <audio> elements for export ───────────────────
-      const audioElMap = new Map<string, HTMLAudioElement>();
+      // ── 5. Offline-render audio with OfflineAudioContext ──────────────────
+      // This decodes every audio/video-audio clip at the correct timeline
+      // position and mixes them into a single AudioBuffer — completely
+      // decoupled from the frame-loop speed, so timing is always perfect.
+      const SAMPLE_RATE    = 44100;
+      const totalSamples   = Math.ceil(project.duration * SAMPLE_RATE);
+      const offlineCtx     = new OfflineAudioContext(2, totalSamples, SAMPLE_RATE);
 
-      for (const clip of audioClips) {
+      /** Fetch a media URL and decode it with the offline context */
+      const fetchAndDecode = async (src: string): Promise<AudioBuffer | null> => {
+        try {
+          const resp = await fetch(src);
+          const ab   = await resp.arrayBuffer();
+          return await offlineCtx.decodeAudioData(ab);
+        } catch {
+          return null;
+        }
+      };
+
+      // Collect all clips that have audio: audio-type clips + video clips (which carry audio)
+      const audioSourceClips = [
+        ...audioClips,
+        ...videoClips,
+      ];
+
+      await Promise.all(audioSourceClips.map(async (clip) => {
         const mediaSrc = clip.src
           || (clip.mediaId ? mediaLibrary.find((m) => m.id === clip.mediaId)?.src : undefined);
-        if (!mediaSrc) continue;
+        if (!mediaSrc) return;
 
-        const aud = document.createElement('audio');
-        aud.src         = mediaSrc;
-        aud.crossOrigin = 'anonymous';
-        aud.preload     = 'auto';
-        document.body.appendChild(aud);
-        exportAudios.push(aud);
-        audioElMap.set(clip.id, aud);
-      }
+        const decoded = await fetchAndDecode(mediaSrc);
+        if (!decoded) return;
 
-      // ── 5. Build Web Audio graph ───────────────────────────────────────────
+        const gain = offlineCtx.createGain();
+        gain.gain.value = Math.max(0, Math.min(2, clip.volume ?? 1));
+        gain.connect(offlineCtx.destination);
+
+        const src = offlineCtx.createBufferSource();
+        src.buffer = decoded;
+
+        // Trim: start playback at clip.trimStart within the source,
+        // offset in the timeline by clip.startTime
+        const trimStart = clip.trimStart ?? 0;
+        const clipLen   = Math.min(clip.duration, decoded.duration - trimStart);
+        if (clipLen <= 0) return;
+
+        src.connect(gain);
+        src.start(clip.startTime, trimStart, clipLen);
+      }));
+
+      // Render the full audio mix offline (non-blocking, fast)
+      const mixedAudioBuffer = await offlineCtx.startRendering();
+
+      // Encode the AudioBuffer to WAV (PCM 16-bit stereo)
+      const wavBlob = audioBufferToWav(mixedAudioBuffer);
+
+      // Create an <audio> element that will play the mixed WAV in lock-step
+      // with the video recording pass so MediaRecorder captures it correctly.
+      const mixedAudioEl = document.createElement('audio');
+      mixedAudioEl.src     = URL.createObjectURL(wavBlob);
+      mixedAudioEl.preload = 'auto';
+      mixedAudioEl.loop    = false;
+      document.body.appendChild(mixedAudioEl);
+      exportAudios.push(mixedAudioEl); // cleaned up later
+
+      // Wait for the mixed audio to be ready
+      await new Promise<void>((r) => {
+        const tid = setTimeout(r, 3000);
+        const done = () => { clearTimeout(tid); r(); };
+        mixedAudioEl.addEventListener('canplaythrough', done, { once: true });
+        mixedAudioEl.addEventListener('error', done, { once: true });
+        mixedAudioEl.load();
+      });
+
+      // ── 6. Set up MediaRecorder with video + pre-rendered audio ───────────
       audioCtx = new AudioContext();
-      const audioDest = audioCtx.createMediaStreamDestination();
+      const audioDest   = audioCtx.createMediaStreamDestination();
+      const mixSrcNode  = audioCtx.createMediaElementSource(mixedAudioEl);
+      const masterGain  = audioCtx.createGain();
+      masterGain.gain.value = 1;
+      mixSrcNode.connect(masterGain);
+      masterGain.connect(audioDest);
 
-      for (const clip of videoClips) {
-        const vid = videoElMap.get(clip.id);
-        if (!vid) continue;
-        const srcNode  = audioCtx.createMediaElementSource(vid);
-        const gainNode = audioCtx.createGain();
-        gainNode.gain.value = Math.max(0, Math.min(1, clip.volume ?? 1));
-        srcNode.connect(gainNode);
-        gainNode.connect(audioDest);
-        // Do NOT connect to audioCtx.destination — we only want recorder output
-      }
-
-      for (const clip of audioClips) {
-        const aud = audioElMap.get(clip.id);
-        if (!aud) continue;
-        const srcNode  = audioCtx.createMediaElementSource(aud);
-        const gainNode = audioCtx.createGain();
-        gainNode.gain.value = Math.max(0, Math.min(1, clip.volume ?? 1));
-        srcNode.connect(gainNode);
-        gainNode.connect(audioDest);
-      }
-
-      // ── 6. Set up MediaRecorder with video + audio ─────────────────────────
       const mime        = getMimeType(format);
       const ext         = getExt(mime);
       const videoStream = canvas.captureStream(fps);
@@ -610,6 +699,10 @@ export default function ExportModal() {
 
       recorder.start(100);
 
+      // Start mixed audio playback in sync with frame recording
+      mixedAudioEl.currentTime = 0;
+      mixedAudioEl.play().catch(() => {});
+
       // ── 7. Pause real playback ─────────────────────────────────────────────
       setIsPlaying(false);
       await new Promise((r) => setTimeout(r, 150));
@@ -622,9 +715,9 @@ export default function ExportModal() {
         if (mediaSrc) imagePreloadMap.set(clip.id, await preloadImage(mediaSrc));
       }));
 
-      // ── 9. Load + seek all video/audio elements to their start positions ───
-      await Promise.all([
-        ...videoClips.map(async (clip) => {
+      // ── 9. Load + seek all video elements to their start positions ──────────
+      await Promise.all(
+        videoClips.map(async (clip) => {
           const vid = videoElMap.get(clip.id);
           if (!vid) return;
           vid.load();
@@ -637,23 +730,7 @@ export default function ExportModal() {
           vid.currentTime = clip.trimStart ?? 0;
           await waitForSeeked(vid, 3000);
         }),
-        ...audioClips.map(async (clip) => {
-          const aud = audioElMap.get(clip.id);
-          if (!aud) return;
-          aud.load();
-          await new Promise<void>((r) => {
-            const tid = setTimeout(r, 5000);
-            const done = () => { clearTimeout(tid); r(); };
-            aud.addEventListener('canplay', done, { once: true });
-            aud.addEventListener('error',   done, { once: true });
-          });
-          aud.currentTime = clip.trimStart ?? 0;
-          await new Promise<void>((r) => {
-            const tid = setTimeout(r, 1000);
-            aud.addEventListener('seeked', () => { clearTimeout(tid); r(); }, { once: true });
-          });
-        }),
-      ]);
+      );
 
       // ── 10. Frame loop ─────────────────────────────────────────────────────
       const totalDuration = project.duration;
@@ -691,23 +768,7 @@ export default function ExportModal() {
           }
         }
 
-        // Keep audio in sync (no await — just set currentTime; AudioContext handles real-time)
-        for (const clip of audioClips) {
-          const isActive = exportTime >= clip.startTime && exportTime < clip.startTime + clip.duration;
-          const aud      = audioElMap.get(clip.id);
-          if (!aud) continue;
-          if (isActive) {
-            const targetTime = (clip.trimStart ?? 0) + (exportTime - clip.startTime);
-            if (aud.paused) {
-              aud.currentTime = targetTime;
-              aud.play().catch(() => {});
-            } else if (Math.abs(aud.currentTime - targetTime) > 0.1) {
-              aud.currentTime = targetTime;
-            }
-          } else {
-            if (!aud.paused) aud.pause();
-          }
-        }
+        // Audio is handled by the pre-rendered mixed audio element (no frame-by-frame sync needed)
 
         if (seekPromises.length > 0) await Promise.all(seekPromises);
 
