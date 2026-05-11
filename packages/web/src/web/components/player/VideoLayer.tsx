@@ -13,6 +13,14 @@
  * CSS filters (brightness/contrast/saturation/blur) are applied reactively via
  * a Zustand subscription so VideoItem doesn't need to re-render on every playback frame.
  *
+ * IMPORTANT: VideoItem must NEVER receive props that change on updateClip (e.g. the
+ * whole clip object). Changing props causes memo to re-render → inline ref callbacks
+ * fire null+el → MediaEngine's registerWrapper gets called again → _setWrapperHidden
+ * is called → video goes black.
+ *
+ * VideoItem only receives: clipId, mediaSrc, mediaType, mediaName, isOverlay, callbacks, canvasSizeRef.
+ * All live clip data (position, filter, opacity) is read from the store subscription.
+ *
  * IMPORTANT: canvasW/canvasH must NOT be passed as props to VideoItem.
  * Passing them causes re-renders → inline ref callbacks fire null+el → MediaEngine
  * loses video element registration mid-playback → freeze/stutter/stuck symptoms.
@@ -38,7 +46,7 @@ const EFFECT_FILTERS: Record<string, string> = {
 /** Build a CSS filter string from clip adjustment properties and effect/filterCss */
 function buildFilter(clip: Clip): string {
   const parts: string[] = [];
-  if (clip.effect && EFFECT_FILTERS[clip.effect]) return EFFECT_FILTERS[clip.effect];
+  if (clip.effect && EFFECT_FILTERS[clip.effect]) return EFFECT_FILTERS[clip.effect]!;
   if (clip.filterCss) return clip.filterCss;
   if (clip.brightness !== undefined && clip.brightness !== 100) parts.push(`brightness(${clip.brightness}%)`);
   if (clip.contrast   !== undefined && clip.contrast   !== 100) parts.push(`contrast(${clip.contrast}%)`);
@@ -76,19 +84,34 @@ interface VideoLayerProps {
 
 /**
  * Single video wrapper — memoised so it NEVER re-renders after mount.
- * All updates (filter, opacity, position) are applied imperatively via subscriptions.
- * onVideoRef/onWrapperRef callbacks must be stable (useCallback in parent).
+ *
+ * Props are ALL stable values that never change for the lifetime of this clip:
+ *   - clipId: string (stable — clip never changes id)
+ *   - mediaSrc: string (stable — clip's media never changes)
+ *   - mediaType: string (stable)
+ *   - mediaName: string (stable)
+ *   - thumbnailColor: string (stable)
+ *   - isOverlay: boolean (stable — clip never changes track)
+ *
+ * All mutable data (x/y/scaleX/scaleY/filter/opacity) is read from the Zustand
+ * store subscription inside the useEffect, NOT from props.
  */
 const VideoItem = memo(function VideoItem({
-  clip,
-  media,
+  clipId,
+  mediaSrc,
+  mediaType,
+  mediaName,
+  thumbnailColor,
   isOverlay,
   onVideoRef,
   onWrapperRef,
   canvasSizeRef,
 }: {
-  clip: Clip;
-  media: MediaItem | undefined;
+  clipId: string;
+  mediaSrc: string | undefined;
+  mediaType: 'video' | 'image' | undefined;
+  mediaName: string;
+  thumbnailColor: string | undefined;
   isOverlay: boolean;
   onVideoRef: (clipId: string, el: HTMLVideoElement | null) => void;
   onWrapperRef: (clipId: string, el: HTMLDivElement | null) => void;
@@ -112,13 +135,18 @@ const VideoItem = memo(function VideoItem({
       if (cw && ch) applyOverlayPosition(el, c, cw, ch);
     };
 
-    // Apply immediately on mount
-    applyToVideo(clip);
-    applyPosition(clip);
+    // Apply immediately on mount — read from store directly (not from props)
+    const initial = useEditorStore.getState().project.tracks
+      .flatMap((t) => t.clips)
+      .find((c) => c.id === clipId);
+    if (initial) {
+      applyToVideo(initial);
+      applyPosition(initial);
+    }
 
     // Subscribe to store — re-apply on any clip property change
     const unsub = useEditorStore.subscribe((state) => {
-      const updated = state.project.tracks.flatMap((t) => t.clips).find((c) => c.id === clip.id);
+      const updated = state.project.tracks.flatMap((t) => t.clips).find((c) => c.id === clipId);
       if (updated) {
         applyToVideo(updated);
         // Merge keyframe-interpolated values so position matches OverlayLayer's CanvasElement
@@ -129,19 +157,22 @@ const VideoItem = memo(function VideoItem({
       }
     });
     return unsub;
-  // clip.id is stable for the lifetime of this component
+  // clipId is stable for the lifetime of this component
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [clip.id]);
+  }, [clipId]);
 
   return (
     <div
       ref={(el) => {
         wrapperRef.current = el;
-        onWrapperRef(clip.id, el);
+        onWrapperRef(clipId, el);
         // Apply initial position imperatively on mount (before any subscription fires)
         if (el) {
+          const clip = useEditorStore.getState().project.tracks
+            .flatMap((t) => t.clips)
+            .find((c) => c.id === clipId);
           const { w: cw, h: ch } = canvasSizeRef.current;
-          if (cw && ch) applyOverlayPosition(el, clip, cw, ch);
+          if (clip && cw && ch) applyOverlayPosition(el, clip, cw, ch);
         }
       }}
       style={{
@@ -162,15 +193,21 @@ const VideoItem = memo(function VideoItem({
         borderRadius: isOverlay ? 4 : 0,
       }}
     >
-      {media?.type === 'video' ? (
+      {mediaType === 'video' && mediaSrc ? (
         <video
           ref={(el) => {
             videoElRef.current = el;
-            onVideoRef(clip.id, el);
-            if (el) el.style.filter = buildFilter(clip);
+            onVideoRef(clipId, el);
+            if (el) {
+              // Apply initial filter from store
+              const clip = useEditorStore.getState().project.tracks
+                .flatMap((t) => t.clips)
+                .find((c) => c.id === clipId);
+              if (clip) el.style.filter = buildFilter(clip);
+            }
           }}
-          src={`${media.src}#${clip.id}`}
-          data-clip-id={clip.id}
+          src={`${mediaSrc}#${clipId}`}
+          data-clip-id={clipId}
           className="w-full h-full"
           style={{
             objectFit: isOverlay ? 'contain' : 'cover',
@@ -181,10 +218,10 @@ const VideoItem = memo(function VideoItem({
           preload="auto"
           muted
         />
-      ) : media?.type === 'image' ? (
+      ) : mediaType === 'image' && mediaSrc ? (
         <img
-          src={media.src}
-          alt={clip.name}
+          src={mediaSrc}
+          alt={mediaName}
           className="w-full h-full object-contain"
           style={{ pointerEvents: 'none' }}
         />
@@ -192,7 +229,7 @@ const VideoItem = memo(function VideoItem({
         <div
           className="w-full h-full flex items-center justify-center"
           style={{
-            background: `linear-gradient(135deg, ${clip.thumbnailColor || '#818CF8'}55, ${clip.thumbnailColor || '#818CF8'}11)`,
+            background: `linear-gradient(135deg, ${thumbnailColor || '#818CF8'}55, ${thumbnailColor || '#818CF8'}11)`,
           }}
         >
           <Monitor size={24} className="text-white opacity-40" />
@@ -249,8 +286,11 @@ export const VideoLayer = memo(function VideoLayer({
         return (
           <VideoItem
             key={clip.id}
-            clip={clip}
-            media={media}
+            clipId={clip.id}
+            mediaSrc={media?.src}
+            mediaType={media?.type as 'video' | 'image' | undefined}
+            mediaName={clip.name}
+            thumbnailColor={clip.thumbnailColor}
             isOverlay={isOverlay}
             onVideoRef={onVideoRef}
             onWrapperRef={wrappedOnWrapperRef}
