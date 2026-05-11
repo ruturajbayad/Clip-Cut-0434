@@ -10,7 +10,7 @@ const RESOLUTIONS = [
   { label: '720p',  h: 720  },
   { label: '1080p', h: 1080 },
   { label: '4K',    h: 2160 },
-];
+] as const;
 
 const FORMATS     = ['MP4', 'WebM'] as const;
 const FPS_OPTIONS = [24, 30, 60]   as const;
@@ -86,8 +86,7 @@ function resolveTextShadow(ts: string | undefined, color: string): string | unde
 }
 
 /**
- * Compute entry-transition opacity/transform progress for a clip at exportTime.
- * Returns { opacity, transform } strings to apply on the canvas element.
+ * Compute entry-transition state for a clip at exportTime.
  */
 function getEntryTransitionState(clip: Clip, exportTime: number): { alpha: number; offsetX: number; offsetY: number; scale: number } {
   const ENTRY_DUR = 0.5;
@@ -97,11 +96,11 @@ function getEntryTransitionState(clip: Clip, exportTime: number): { alpha: numbe
   if (elapsed >= ENTRY_DUR) return { alpha: 1, offsetX: 0, offsetY: 0, scale: 1 };
   const t = Math.max(0, Math.min(1, elapsed / ENTRY_DUR));
   switch (entry) {
-    case 'fade-in':   return { alpha: t, offsetX: 0, offsetY: 0, scale: 1 };
-    case 'slide-up':  return { alpha: t, offsetX: 0, offsetY: (1 - t) * 40, scale: 1 };
-    case 'slide-left':return { alpha: t, offsetX: (1 - t) * 60, offsetY: 0, scale: 1 };
-    case 'zoom-in':   return { alpha: t, offsetX: 0, offsetY: 0, scale: 0.6 + t * 0.4 };
-    default:          return { alpha: 1, offsetX: 0, offsetY: 0, scale: 1 };
+    case 'fade-in':    return { alpha: t, offsetX: 0, offsetY: 0, scale: 1 };
+    case 'slide-up':   return { alpha: t, offsetX: 0, offsetY: (1 - t) * 40, scale: 1 };
+    case 'slide-left': return { alpha: t, offsetX: (1 - t) * 60, offsetY: 0, scale: 1 };
+    case 'zoom-in':    return { alpha: t, offsetX: 0, offsetY: 0, scale: 0.6 + t * 0.4 };
+    default:           return { alpha: 1, offsetX: 0, offsetY: 0, scale: 1 };
   }
 }
 
@@ -112,7 +111,7 @@ function drawTextClip(
   clip: Clip,
   exportW: number,
   exportH: number,
-  liveClip: Clip, // keyframe-interpolated
+  liveClip: Clip,
   exportTime: number,
 ) {
   const cx    = (liveClip.x ?? 0.5) * exportW;
@@ -272,13 +271,19 @@ function drawVideoClip(
   liveClip: Clip,
   exportTime: number,
 ) {
-  const { alpha, offsetX, offsetY, scale } = getEntryTransitionState(clip, exportTime);
-  const baseOpacity = liveClip.opacity ?? 1;
+  // For main track: use entry transition alpha but NOT keyframe position/scale
+  // (main video always covers the full canvas)
+  const { alpha: entryAlpha, offsetX, offsetY, scale: entryScale } = getEntryTransitionState(clip, exportTime);
+
+  // Only apply keyframe opacity for overlay clips; main track uses clip.opacity or 1
+  const baseOpacity = isMainTrack
+    ? (clip.opacity ?? 1) * entryAlpha
+    : (liveClip.opacity ?? 1) * entryAlpha;
 
   ctx.save();
-  ctx.globalAlpha = baseOpacity * alpha;
+  ctx.globalAlpha = baseOpacity;
 
-  const filt = buildFilter(liveClip);
+  const filt = buildFilter(isMainTrack ? clip : liveClip);
   if (filt && filt !== 'none') {
     // @ts-ignore
     ctx.filter = filt;
@@ -289,21 +294,21 @@ function drawVideoClip(
   }
 
   if (isMainTrack) {
-    // object-fit: cover — fills canvas
+    // object-fit: cover — fills canvas, centred
     const vidAR = vid.videoWidth  / (vid.videoHeight || 1);
     const boxAR = exportW / exportH;
-    let drawW: number, drawH: number, drawX: number, drawY: number;
+    let drawW: number, drawH: number;
     if (vidAR > boxAR) { drawH = exportH; drawW = exportH * vidAR; }
     else               { drawW = exportW; drawH = exportW / vidAR; }
-    drawX = (exportW - drawW) / 2 + offsetX;
-    drawY = (exportH - drawH) / 2 + offsetY;
-    ctx.drawImage(vid, drawX, drawY, drawW * scale, drawH * scale);
+    const drawX = (exportW - drawW) / 2;
+    const drawY = (exportH - drawH) / 2;
+    ctx.drawImage(vid, drawX, drawY, drawW, drawH);
   } else {
     // Overlay clip — positioned by keyframe-interpolated x/y/scale
-    const cx = (liveClip.x ?? 0.5) * exportW;
-    const cy = (liveClip.y ?? 0.5) * exportH;
-    const sw = (liveClip.scaleX ?? 1.0) * exportW;
-    const sh = (liveClip.scaleY ?? 1.0) * exportH;
+    const cx  = (liveClip.x  ?? 0.5) * exportW;
+    const cy  = (liveClip.y  ?? 0.5) * exportH;
+    const sw  = (liveClip.scaleX ?? 1.0) * exportW;
+    const sh  = (liveClip.scaleY ?? 1.0) * exportH;
     const acx = cx + offsetX;
     const acy = cy + offsetY;
 
@@ -313,12 +318,11 @@ function drawVideoClip(
       ctx.translate(-acx, -acy);
     }
 
-    // object-fit: contain
     const vidAR = vid.videoWidth  / (vid.videoHeight || 1);
     const boxAR = sw / sh;
     let drawW: number, drawH: number;
-    if (vidAR > boxAR) { drawW = sw * scale; drawH = (sw / vidAR) * scale; }
-    else               { drawH = sh * scale; drawW = (sh * vidAR) * scale; }
+    if (vidAR > boxAR) { drawW = sw * entryScale; drawH = (sw / vidAR) * entryScale; }
+    else               { drawH = sh * entryScale; drawW = (sh * vidAR) * entryScale; }
 
     ctx.drawImage(vid, acx - drawW / 2, acy - drawH / 2, drawW, drawH);
   }
@@ -327,8 +331,7 @@ function drawVideoClip(
 }
 
 /**
- * Draw a clip transition overlay onto the canvas.
- * Mirrors TransitionOverlay.tsx logic but rendered to canvas 2D context.
+ * Draw clip transition overlay.
  */
 function drawTransition(
   ctx: CanvasRenderingContext2D,
@@ -351,7 +354,6 @@ function drawTransition(
       break;
     }
     case 'dissolve': {
-      // Simulate dissolve with radial gradients
       const na = fade * 0.9;
       const grd1 = ctx.createRadialGradient(exportW * 0.2, exportH * 0.2, 0, exportW * 0.2, exportH * 0.2, exportW * 0.4);
       grd1.addColorStop(0, `rgba(0,0,0,${na})`);
@@ -367,7 +369,6 @@ function drawTransition(
       break;
     }
     case 'blur': {
-      // Canvas doesn't support backdrop-filter — approximate with dark fade
       ctx.globalAlpha = fade * 0.6;
       ctx.fillStyle   = '#000000';
       ctx.fillRect(0, 0, exportW, exportH);
@@ -383,7 +384,6 @@ function drawTransition(
       break;
     }
     case 'slide-left': {
-      // Shadow overlay to simulate the wipe
       ctx.globalAlpha = fade * 0.5;
       const grd = ctx.createLinearGradient(0, 0, exportW, 0);
       grd.addColorStop(0, 'rgba(0,0,0,0.4)');
@@ -399,7 +399,6 @@ function drawTransition(
       break;
     }
     case 'glitch': {
-      // Simple glitch lines
       ctx.globalAlpha = fade * 0.3;
       for (let i = 0; i < 8; i++) {
         ctx.fillStyle = i % 2 === 0 ? 'rgba(255,0,0,0.3)' : 'rgba(0,255,255,0.2)';
@@ -419,7 +418,6 @@ function drawTransition(
       break;
     }
     case 'whip': {
-      // Speed streaks
       for (let i = 0; i < 6; i++) {
         const yPos = ([0.1, 0.28, 0.45, 0.62, 0.78, 0.9][i] ?? 0) * exportH;
         ctx.globalAlpha = fade * (0.06 + (i % 2) * 0.04);
@@ -451,10 +449,11 @@ export default function ExportModal() {
     canvasAspectRatio:  s.canvasAspectRatio,
   })));
 
+  // Default to 1080p (high quality). User can change.
   const [resolution, setResolution] = useState<typeof RESOLUTIONS[number]>(RESOLUTIONS[1]!);
   const [format,     setFormat]     = useState<typeof FORMATS[number]>('MP4');
   const [fps,        setFps]        = useState<typeof FPS_OPTIONS[number]>(30);
-  const [bitrate,    setBitrate]    = useState(8);
+  const [bitrate,    setBitrate]    = useState(16); // default higher bitrate
   const [status,     setStatus]     = useState<ExportStatus>('idle');
   const [progress,   setProgress]   = useState(0);
   const [errorMsg,   setErrorMsg]   = useState<string | null>(null);
@@ -468,12 +467,25 @@ export default function ExportModal() {
   const exportH = resolution.h;
   const exportW = Math.round(exportH * (canvasAspectRatio.w / canvasAspectRatio.h));
 
+  // Auto-select best resolution based on source video native height
   useEffect(() => {
     if (!showExportModal) {
       setStatus('idle');
       setProgress(0);
       setErrorMsg(null);
       cancelRef.current = false;
+      return;
+    }
+    // Detect native video resolution from the first video element in preview
+    const previewRoot = document.querySelector<HTMLDivElement>('[data-preview-canvas="root"]');
+    if (previewRoot) {
+      const vid = previewRoot.querySelector<HTMLVideoElement>('video[data-clip-id]');
+      if (vid && vid.videoHeight > 0) {
+        const nativeH = vid.videoHeight;
+        // Pick the closest resolution option that doesn't exceed native
+        const best = [...RESOLUTIONS].reverse().find((r) => r.h <= nativeH) ?? RESOLUTIONS[1]!;
+        setResolution(best);
+      }
     }
   }, [showExportModal]);
 
@@ -488,6 +500,11 @@ export default function ExportModal() {
     setErrorMsg(null);
     cancelRef.current = false;
 
+    // All elements we create — cleaned up on finish/error
+    const exportVideos: HTMLVideoElement[] = [];
+    const exportAudios: HTMLAudioElement[] = [];
+    let audioCtx: AudioContext | null = null;
+
     try {
       // ── 1. Create offscreen canvas ─────────────────────────────────────────
       const canvas  = document.createElement('canvas');
@@ -495,11 +512,89 @@ export default function ExportModal() {
       canvas.height = exportH;
       const ctx     = canvas.getContext('2d', { alpha: false })!;
 
-      // ── 2. Set up MediaRecorder ────────────────────────────────────────────
-      const mime     = getMimeType(format);
-      const ext      = getExt(mime);
-      const stream   = canvas.captureStream(fps);
-      const recorder = new MediaRecorder(stream, {
+      // ── 2. Gather all clips ────────────────────────────────────────────────
+      const allClips   = project.tracks.flatMap((t) => t.clips);
+      const mainTrack  = project.tracks.find((t) => t.type === 'video');
+      const videoClips = allClips.filter((c) => c.type === 'video');
+      const textClips  = allClips.filter((c) => c.type === 'text');
+      const imageClips = allClips.filter((c) => c.type === 'image');
+      const audioClips = allClips.filter((c) => c.type === 'audio');
+
+      // ── 3. Create dedicated <video> elements for export ───────────────────
+      // We do NOT reuse preview elements — avoids fighting MediaEngine and
+      // lets us freely connect them to our own AudioContext.
+      const videoElMap = new Map<string, HTMLVideoElement>();
+
+      for (const clip of videoClips) {
+        const mediaSrc = clip.src
+          || (clip.mediaId ? mediaLibrary.find((m) => m.id === clip.mediaId)?.src : undefined);
+        if (!mediaSrc) continue;
+
+        const vid = document.createElement('video');
+        vid.src          = mediaSrc;
+        vid.crossOrigin  = 'anonymous';
+        vid.preload      = 'auto';
+        vid.muted        = false; // unmuted so AudioContext can capture audio
+        vid.playbackRate = clip.speed ?? 1;
+        // Keep hidden but in DOM so browser decodes
+        vid.style.cssText = 'position:fixed;left:-9999px;top:-9999px;width:1px;height:1px;opacity:0;pointer-events:none';
+        document.body.appendChild(vid);
+        exportVideos.push(vid);
+        videoElMap.set(clip.id, vid);
+      }
+
+      // ── 4. Create dedicated <audio> elements for export ───────────────────
+      const audioElMap = new Map<string, HTMLAudioElement>();
+
+      for (const clip of audioClips) {
+        const mediaSrc = clip.src
+          || (clip.mediaId ? mediaLibrary.find((m) => m.id === clip.mediaId)?.src : undefined);
+        if (!mediaSrc) continue;
+
+        const aud = document.createElement('audio');
+        aud.src         = mediaSrc;
+        aud.crossOrigin = 'anonymous';
+        aud.preload     = 'auto';
+        document.body.appendChild(aud);
+        exportAudios.push(aud);
+        audioElMap.set(clip.id, aud);
+      }
+
+      // ── 5. Build Web Audio graph ───────────────────────────────────────────
+      audioCtx = new AudioContext();
+      const audioDest = audioCtx.createMediaStreamDestination();
+
+      for (const clip of videoClips) {
+        const vid = videoElMap.get(clip.id);
+        if (!vid) continue;
+        const srcNode  = audioCtx.createMediaElementSource(vid);
+        const gainNode = audioCtx.createGain();
+        gainNode.gain.value = Math.max(0, Math.min(1, clip.volume ?? 1));
+        srcNode.connect(gainNode);
+        gainNode.connect(audioDest);
+        // Do NOT connect to audioCtx.destination — we only want recorder output
+      }
+
+      for (const clip of audioClips) {
+        const aud = audioElMap.get(clip.id);
+        if (!aud) continue;
+        const srcNode  = audioCtx.createMediaElementSource(aud);
+        const gainNode = audioCtx.createGain();
+        gainNode.gain.value = Math.max(0, Math.min(1, clip.volume ?? 1));
+        srcNode.connect(gainNode);
+        gainNode.connect(audioDest);
+      }
+
+      // ── 6. Set up MediaRecorder with video + audio ─────────────────────────
+      const mime        = getMimeType(format);
+      const ext         = getExt(mime);
+      const videoStream = canvas.captureStream(fps);
+
+      for (const track of audioDest.stream.getAudioTracks()) {
+        videoStream.addTrack(track);
+      }
+
+      const recorder = new MediaRecorder(videoStream, {
         mimeType: mime,
         videoBitsPerSecond: bitrate * 1_000_000,
       });
@@ -515,60 +610,59 @@ export default function ExportModal() {
 
       recorder.start(100);
 
-      // ── 3. Pause real playback ─────────────────────────────────────────────
+      // ── 7. Pause real playback ─────────────────────────────────────────────
       setIsPlaying(false);
-      await new Promise((r) => setTimeout(r, 100)); // let engine settle
+      await new Promise((r) => setTimeout(r, 150));
 
-      // ── 4. Get all clips ───────────────────────────────────────────────────
-      const allClips   = project.tracks.flatMap((t) => t.clips);
-      const mainTrack  = project.tracks.find((t) => t.type === 'video');
-      const videoClips = allClips.filter((c) => c.type === 'video');
-      const textClips  = allClips.filter((c) => c.type === 'text');
-      const imageClips = allClips.filter((c) => c.type === 'image');
-
-      // ── 5. Locate live <video> elements ────────────────────────────────────
-      const previewRoot = document.querySelector<HTMLDivElement>('[data-preview-canvas="root"]');
-      const videoElMap  = new Map<string, HTMLVideoElement>();
-      if (previewRoot) {
-        for (const vid of previewRoot.querySelectorAll<HTMLVideoElement>('video[data-clip-id]')) {
-          const id = vid.dataset.clipId;
-          if (id) videoElMap.set(id, vid);
-        }
-        // Fallback: match by src hash
-        if (videoElMap.size === 0) {
-          for (const vid of previewRoot.querySelectorAll<HTMLVideoElement>('video')) {
-            const hash = vid.src.split('#')[1];
-            if (hash) videoElMap.set(hash, vid);
-          }
-        }
-      }
-
-      // ── 6. Preload all image sources ───────────────────────────────────────
-      const imageElMap = new Map<string, HTMLImageElement | null>();
+      // ── 8. Preload images ──────────────────────────────────────────────────
+      const imagePreloadMap = new Map<string, HTMLImageElement | null>();
       await Promise.all(imageClips.map(async (clip) => {
         const mediaSrc = clip.src
           || (clip.mediaId ? mediaLibrary.find((m) => m.id === clip.mediaId)?.src : undefined);
-        if (mediaSrc) imageElMap.set(clip.id, await preloadImage(mediaSrc));
+        if (mediaSrc) imagePreloadMap.set(clip.id, await preloadImage(mediaSrc));
       }));
 
-      // ── 7. Warm up all video elements ─────────────────────────────────────
-      // Seek every video to its trim start and wait for readyState >= 2
-      await Promise.all(videoClips.map(async (clip) => {
-        const vid = videoElMap.get(clip.id);
-        if (!vid) return;
-        if (vid.readyState < 1) { vid.load(); }
-        vid.currentTime = clip.trimStart ?? 0;
-        await waitForSeeked(vid, 3000);
-      }));
+      // ── 9. Load + seek all video/audio elements to their start positions ───
+      await Promise.all([
+        ...videoClips.map(async (clip) => {
+          const vid = videoElMap.get(clip.id);
+          if (!vid) return;
+          vid.load();
+          await new Promise<void>((r) => {
+            const tid = setTimeout(r, 5000);
+            const done = () => { clearTimeout(tid); r(); };
+            vid.addEventListener('canplay', done, { once: true });
+            vid.addEventListener('error',   done, { once: true });
+          });
+          vid.currentTime = clip.trimStart ?? 0;
+          await waitForSeeked(vid, 3000);
+        }),
+        ...audioClips.map(async (clip) => {
+          const aud = audioElMap.get(clip.id);
+          if (!aud) return;
+          aud.load();
+          await new Promise<void>((r) => {
+            const tid = setTimeout(r, 5000);
+            const done = () => { clearTimeout(tid); r(); };
+            aud.addEventListener('canplay', done, { once: true });
+            aud.addEventListener('error',   done, { once: true });
+          });
+          aud.currentTime = clip.trimStart ?? 0;
+          await new Promise<void>((r) => {
+            const tid = setTimeout(r, 1000);
+            aud.addEventListener('seeked', () => { clearTimeout(tid); r(); }, { once: true });
+          });
+        }),
+      ]);
 
-      // ── 8. Frame loop ──────────────────────────────────────────────────────
+      // ── 10. Frame loop ─────────────────────────────────────────────────────
       const totalDuration = project.duration;
       const frameInterval = 1 / fps;
       let   exportTime    = 0;
 
       while (exportTime <= totalDuration && !cancelRef.current) {
 
-        // ── 8a. Resolve live (keyframe-interpolated) clip state ──────────────
+        // ── 10a. Resolve keyframe-interpolated clip state ────────────────────
         const liveClipMap = new Map<string, Clip>();
         for (const clip of allClips) {
           const interp = interpolateClip(clip, exportTime);
@@ -576,24 +670,42 @@ export default function ExportModal() {
           liveClipMap.set(clip.id, live as Clip);
         }
 
-        // ── 8b. Seek each active video to its correct source time ────────────
+        // ── 10b. Seek active video clips to correct source time ──────────────
         const seekPromises: Promise<void>[] = [];
 
         for (const clip of videoClips) {
           const isActive = exportTime >= clip.startTime && exportTime < clip.startTime + clip.duration;
           const vid      = videoElMap.get(clip.id);
-          if (!vid) continue;
-          if (!isActive) continue;
+          if (!vid || !isActive) continue;
 
           const speed         = clip.speed ?? 1;
           const trimStart     = clip.trimStart ?? 0;
           const elapsedInClip = (exportTime - clip.startTime) * speed;
           const targetTime    = trimStart + elapsedInClip;
-          const clampedTime   = Math.max(0, Math.min(isFinite(vid.duration) ? vid.duration : targetTime, targetTime));
+          const maxTime       = isFinite(vid.duration) ? vid.duration : targetTime;
+          const clampedTime   = Math.max(0, Math.min(maxTime, targetTime));
 
           if (Math.abs(vid.currentTime - clampedTime) > 0.015) {
             vid.currentTime = clampedTime;
             seekPromises.push(waitForSeeked(vid, 2000));
+          }
+        }
+
+        // Keep audio in sync (no await — just set currentTime; AudioContext handles real-time)
+        for (const clip of audioClips) {
+          const isActive = exportTime >= clip.startTime && exportTime < clip.startTime + clip.duration;
+          const aud      = audioElMap.get(clip.id);
+          if (!aud) continue;
+          if (isActive) {
+            const targetTime = (clip.trimStart ?? 0) + (exportTime - clip.startTime);
+            if (aud.paused) {
+              aud.currentTime = targetTime;
+              aud.play().catch(() => {});
+            } else if (Math.abs(aud.currentTime - targetTime) > 0.1) {
+              aud.currentTime = targetTime;
+            }
+          } else {
+            if (!aud.paused) aud.pause();
           }
         }
 
@@ -602,11 +714,11 @@ export default function ExportModal() {
         // Give browser one rAF to decode the sought frame
         await new Promise<void>((r) => requestAnimationFrame(() => r()));
 
-        // ── 8c. Draw frame ───────────────────────────────────────────────────
+        // ── 10c. Draw frame ──────────────────────────────────────────────────
         ctx.fillStyle = '#000000';
         ctx.fillRect(0, 0, exportW, exportH);
 
-        // Main track video (bottom)
+        // Main track videos (bottom layer, cover fill)
         for (const clip of videoClips) {
           const isActive = exportTime >= clip.startTime && exportTime < clip.startTime + clip.duration;
           if (!isActive || clip.trackId !== mainTrack?.id) continue;
@@ -630,7 +742,7 @@ export default function ExportModal() {
         for (const clip of imageClips) {
           const isActive = exportTime >= clip.startTime && exportTime < clip.startTime + clip.duration;
           if (!isActive) continue;
-          const img = imageElMap.get(clip.id);
+          const img = imagePreloadMap.get(clip.id);
           if (!img) continue;
           const liveClip = liveClipMap.get(clip.id)!;
           drawImageClip(ctx, clip, img, exportW, exportH, liveClip, exportTime);
@@ -644,8 +756,7 @@ export default function ExportModal() {
           drawTextClip(ctx, clip, exportW, exportH, liveClip, exportTime);
         }
 
-        // ── 8d. Clip transitions ─────────────────────────────────────────────
-        // Find any transition happening at this exportTime between two main-track clips
+        // ── 10d. Clip transitions ────────────────────────────────────────────
         if (mainTrack) {
           const mainClips = mainTrack.clips
             .filter((c) => c.type === 'video')
@@ -653,19 +764,12 @@ export default function ExportModal() {
 
           for (let i = 0; i < mainClips.length - 1; i++) {
             const curr = mainClips[i]!;
-            const next = mainClips[i + 1]!;
             const tEnd   = curr.startTime + curr.duration;
             const tStart = tEnd - TRANSITION_DURATION;
 
             if (exportTime >= tStart && exportTime <= tEnd + TRANSITION_DURATION && curr.transition) {
               const progress = (exportTime - tStart) / (TRANSITION_DURATION * 2);
               drawTransition(ctx, curr.transition, progress, exportW, exportH);
-              break;
-            }
-            // Also check if next clip has a transition set
-            if (exportTime >= tEnd && exportTime <= tEnd + TRANSITION_DURATION && next.transition) {
-              const progress = (exportTime - tEnd) / (TRANSITION_DURATION * 2);
-              drawTransition(ctx, next.transition, progress, exportW, exportH);
               break;
             }
           }
@@ -676,16 +780,23 @@ export default function ExportModal() {
         setCurrentTime(exportTime);
       }
 
+      const cleanup = () => {
+        videoStream.getTracks().forEach((t) => t.stop());
+        audioCtx?.close();
+        exportVideos.forEach((v) => { v.pause(); v.src = ''; v.remove(); });
+        exportAudios.forEach((a) => { a.pause(); a.src = ''; a.remove(); });
+      };
+
       if (cancelRef.current) {
         recorder.stop();
-        stream.getTracks().forEach((t) => t.stop());
+        cleanup();
         setStatus('idle');
         return;
       }
 
-      // ── 9. Finish ──────────────────────────────────────────────────────────
+      // ── 11. Finish ─────────────────────────────────────────────────────────
       recorder.stop();
-      stream.getTracks().forEach((t) => t.stop());
+      cleanup();
 
       const blob = await done;
       const url  = URL.createObjectURL(blob);
@@ -699,6 +810,9 @@ export default function ExportModal() {
 
     } catch (err: unknown) {
       console.error('[Export] failed:', err);
+      audioCtx?.close();
+      exportVideos.forEach((v) => { try { v.pause(); v.src = ''; v.remove(); } catch {} });
+      exportAudios.forEach((a) => { try { a.pause(); a.src = ''; a.remove(); } catch {} });
       setErrorMsg(err instanceof Error ? err.message : String(err));
       setStatus('idle');
     }
@@ -812,7 +926,7 @@ export default function ExportModal() {
                     />
                   </div>
                   <div className="text-[11px] text-gray-400 mt-1.5">
-                    Frame-accurate render · keyframes · transitions · effects
+                    Frame-accurate render · keyframes · transitions · audio
                   </div>
                 </div>
                 <button
