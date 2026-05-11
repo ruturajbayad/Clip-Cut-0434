@@ -21,18 +21,47 @@ const TABS: { id: ActivePanel; icon: React.ComponentType<{ size?: number; classN
 ];
 
 const TEXT_PRESETS = [
-  { id: 'cinematic', label: 'Cinematic Title', previewStyle: 'text-lg font-bold tracking-widest uppercase', previewColor: 'text-gray-900',
-    fontSize: 96, fontFamily: 'Inter', color: '#FFFFFF', text: 'CINEMATIC TITLE' },
-  { id: 'vlog', label: 'Vlog Style', previewStyle: 'text-xl font-bold italic', previewColor: 'text-blue-600',
-    fontSize: 72, fontFamily: 'Inter', color: '#818CF8', text: 'Vlog Title' },
-  { id: 'gaming', label: 'Gaming', previewStyle: 'text-xl font-black uppercase', previewColor: 'text-yellow-500',
-    fontSize: 80, fontFamily: 'Space Grotesk', color: '#FBBF24', text: 'GAME ON' },
-  { id: 'minimal', label: 'Minimal', previewStyle: 'text-sm font-light tracking-widest', previewColor: 'text-gray-600',
-    fontSize: 36, fontFamily: 'Raleway', color: '#CCCCCC', text: 'minimal text' },
-  { id: 'neon', label: 'Neon Glow', previewStyle: 'text-xl font-bold', previewColor: 'text-purple-500',
-    fontSize: 72, fontFamily: 'Space Grotesk', color: '#C084FC', text: 'NEON GLOW' },
-  { id: 'subtitle', label: 'Subtitle', previewStyle: 'text-sm font-medium', previewColor: 'text-gray-800',
-    fontSize: 40, fontFamily: 'Inter', color: '#FFFFFF', text: 'Subtitle text here' },
+  {
+    id: 'cinematic', label: 'Cinematic Title',
+    previewStyle: 'text-lg font-bold tracking-widest uppercase', previewColor: 'text-gray-900',
+    fontSize: 96, fontFamily: 'Inter', color: '#FFFFFF', text: 'CINEMATIC TITLE',
+    fontWeight: 'bold' as const, fontStyle: 'normal' as const, textUppercase: true,
+    letterSpacing: 8, textShadow: 'hard', textOutline: '#000000', textOutlineWidth: 2,
+  },
+  {
+    id: 'vlog', label: 'Vlog Style',
+    previewStyle: 'text-xl font-bold italic', previewColor: 'text-blue-600',
+    fontSize: 72, fontFamily: 'Inter', color: '#818CF8', text: 'Vlog Title',
+    fontWeight: 'bold' as const, fontStyle: 'italic' as const, textShadow: 'soft',
+  },
+  {
+    id: 'gaming', label: 'Gaming',
+    previewStyle: 'text-xl font-black uppercase', previewColor: 'text-yellow-500',
+    fontSize: 80, fontFamily: 'Space Grotesk', color: '#FBBF24', text: 'GAME ON',
+    fontWeight: '900' as const, fontStyle: 'normal' as const, textUppercase: true,
+    letterSpacing: 4, textShadow: 'hard', textOutline: '#000000', textOutlineWidth: 3,
+  },
+  {
+    id: 'minimal', label: 'Minimal',
+    previewStyle: 'text-sm font-light tracking-widest', previewColor: 'text-gray-600',
+    fontSize: 36, fontFamily: 'Raleway', color: '#CCCCCC', text: 'minimal text',
+    fontWeight: '300' as const, fontStyle: 'normal' as const, letterSpacing: 6,
+    textShadow: 'none',
+  },
+  {
+    id: 'neon', label: 'Neon Glow',
+    previewStyle: 'text-xl font-bold', previewColor: 'text-purple-500',
+    fontSize: 72, fontFamily: 'Space Grotesk', color: '#C084FC', text: 'NEON GLOW',
+    fontWeight: 'bold' as const, fontStyle: 'normal' as const, textUppercase: true,
+    letterSpacing: 4, textShadow: 'neon',
+  },
+  {
+    id: 'subtitle', label: 'Subtitle',
+    previewStyle: 'text-sm font-medium', previewColor: 'text-gray-800',
+    fontSize: 40, fontFamily: 'Inter', color: '#FFFFFF', text: 'Subtitle text here',
+    fontWeight: '500' as const, fontStyle: 'normal' as const, textShadow: 'soft',
+    textBackground: 'rgba(0,0,0,0.5)',
+  },
 ];
 
 const EFFECT_ITEMS = [
@@ -311,15 +340,24 @@ export default function LeftSidebar() {
     if (textTrack) {
       const endTime = textTrack.clips.reduce((m, c) => Math.max(m, c.startTime + c.duration), 0);
       addClip(textTrack.id, {
-        name: preset ? preset.label : 'New Text',
-        type: 'text',
-        startTime: endTime,
-        duration: 4,
+        name:         preset ? preset.label : 'New Text',
+        type:         'text',
+        startTime:    endTime,
+        duration:     4,
         thumbnailColor: '#FBBF24',
-        text: preset ? preset.text : 'Your Text Here',
-        fontSize: preset ? preset.fontSize : 72,
-        fontFamily: preset ? preset.fontFamily : 'Inter',
-        color: preset ? preset.color : '#FFFFFF',
+        text:         preset ? preset.text      : 'Your Text Here',
+        fontSize:     preset ? preset.fontSize  : 72,
+        fontFamily:   preset ? preset.fontFamily : 'Inter',
+        color:        preset ? preset.color     : '#FFFFFF',
+        // New style fields from preset
+        fontWeight:       preset?.fontWeight,
+        fontStyle:        preset?.fontStyle,
+        textUppercase:    preset?.textUppercase,
+        letterSpacing:    preset?.letterSpacing,
+        textShadow:       preset?.textShadow ?? 'soft',
+        textOutline:      preset?.textOutline,
+        textOutlineWidth: preset?.textOutlineWidth,
+        textBackground:   preset?.textBackground,
       });
     }
   };
@@ -520,10 +558,44 @@ export default function LeftSidebar() {
                     whileHover={{ scale: 1.01 }}
                     whileTap={{ scale: 0.98 }}
                     onClick={() => handleAddText(preset)}
-                    className="border border-gray-100 hover:border-blue-200 hover:bg-blue-50/50 rounded-xl p-3 cursor-pointer transition-all"
+                    className="border border-gray-100 hover:border-blue-200 rounded-xl p-3 cursor-pointer transition-all overflow-hidden"
+                    style={{
+                      background: preset.textBackground
+                        ? preset.textBackground
+                        : 'linear-gradient(135deg, #f8f9fa 0%, #f1f3f5 100%)',
+                    }}
                   >
-                    <div className={`${preset.previewStyle} ${preset.previewColor} leading-tight`}>{preset.label}</div>
-                    <div className="text-[9px] text-gray-400 mt-0.5">{preset.fontFamily} · {preset.fontSize}px</div>
+                    <div
+                      style={{
+                        fontFamily:    preset.fontFamily + ', sans-serif',
+                        fontSize:      Math.max(11, preset.fontSize * 0.18),
+                        color:         preset.color,
+                        fontWeight:    preset.fontWeight || 'bold',
+                        fontStyle:     preset.fontStyle  || 'normal',
+                        letterSpacing: preset.letterSpacing ? `${preset.letterSpacing * 0.18}px` : undefined,
+                        textTransform: preset.textUppercase ? 'uppercase' : 'none',
+                        textShadow:    (() => {
+                          const ts = preset.textShadow;
+                          if (!ts || ts === 'none') return undefined;
+                          if (ts === 'soft')  return '0 1px 4px rgba(0,0,0,0.6)';
+                          if (ts === 'hard')  return '1px 1px 0 rgba(0,0,0,0.9)';
+                          if (ts === 'glow')  return `0 0 6px ${preset.color}`;
+                          if (ts === 'neon')  return `0 0 4px #fff, 0 0 8px ${preset.color}`;
+                          return ts;
+                        })(),
+                        WebkitTextStroke: preset.textOutline && preset.textOutlineWidth
+                          ? `${preset.textOutlineWidth * 0.18}px ${preset.textOutline}` : undefined,
+                        lineHeight: 1.2,
+                        whiteSpace: 'nowrap',
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                      }}
+                    >
+                      {preset.textUppercase ? preset.label.toUpperCase() : preset.label}
+                    </div>
+                    <div className="text-[9px] text-gray-400 mt-0.5 opacity-60">
+                      {preset.fontFamily} · {preset.fontSize}px
+                    </div>
                   </motion.div>
                 ))}
               </div>

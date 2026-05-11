@@ -128,6 +128,25 @@ const VideoItem = memo(function VideoItem({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [clip.id, isOverlay]);
 
+  // Re-apply position when canvas size changes (window resize, aspect ratio change)
+  useEffect(() => {
+    if (!isOverlay || !canvasW || !canvasH) return;
+    const el = wrapperRef.current;
+    if (!el) return;
+    const cx  = (clip.x ?? 0.5) * canvasW;
+    const cy  = (clip.y ?? 0.5) * canvasH;
+    const sw  = (clip.scaleX ?? 1.0) * canvasW;
+    const sh  = (clip.scaleY ?? 1.0) * canvasH;
+    const rot = clip.rotation ?? 0;
+    el.style.inset     = 'unset';
+    el.style.left      = `${cx - sw / 2}px`;
+    el.style.top       = `${cy - sh / 2}px`;
+    el.style.width     = `${sw}px`;
+    el.style.height    = `${sh}px`;
+    el.style.transform = `rotate(${rot}deg) translateZ(0)`;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canvasW, canvasH, isOverlay]);
+
   return (
     <div
       ref={(el) => {
