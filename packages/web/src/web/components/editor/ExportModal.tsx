@@ -1,17 +1,17 @@
 import { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { X, Download, CheckCircle, Loader2 } from 'lucide-react';
-import { useEditorStore } from '../../store/editorStore';
+import { useEditorStore, type Clip } from '../../store/editorStore';
 import { useShallow } from 'zustand/react/shallow';
 
 const RESOLUTIONS = [
-  { label: '720p HD',  value: '720p', w: 1280, h: 720  },
+  { label: '720p HD',   value: '720p',  w: 1280, h: 720  },
   { label: '1080p FHD', value: '1080p', w: 1920, h: 1080 },
-  { label: '4K UHD',  value: '4k',   w: 3840, h: 2160 },
+  { label: '4K UHD',   value: '4k',    w: 3840, h: 2160 },
 ];
 
-const FORMATS = ['MP4', 'WebM'] as const;
-const FPS_OPTIONS = [24, 30, 60] as const;
+const FORMATS    = ['MP4', 'WebM'] as const;
+const FPS_OPTIONS = [24, 30, 60]  as const;
 
 type ExportStatus = 'idle' | 'exporting' | 'done';
 
@@ -19,34 +19,330 @@ type ExportStatus = 'idle' | 'exporting' | 'done';
 
 function getMimeType(format: string): string {
   if (format === 'MP4') {
-    // Prefer mp4 if supported, fall back to webm
-    if (MediaRecorder.isTypeSupported('video/mp4;codecs=avc1'))  return 'video/mp4;codecs=avc1';
-    if (MediaRecorder.isTypeSupported('video/mp4'))              return 'video/mp4';
+    if (MediaRecorder.isTypeSupported('video/mp4;codecs=avc1')) return 'video/mp4;codecs=avc1';
+    if (MediaRecorder.isTypeSupported('video/mp4'))             return 'video/mp4';
   }
-  if (MediaRecorder.isTypeSupported('video/webm;codecs=vp9'))   return 'video/webm;codecs=vp9';
-  if (MediaRecorder.isTypeSupported('video/webm;codecs=vp8'))   return 'video/webm;codecs=vp8';
+  if (MediaRecorder.isTypeSupported('video/webm;codecs=vp9')) return 'video/webm;codecs=vp9';
+  if (MediaRecorder.isTypeSupported('video/webm;codecs=vp8')) return 'video/webm;codecs=vp8';
   return 'video/webm';
 }
 
 function getExt(mime: string): string {
-  if (mime.startsWith('video/mp4')) return 'mp4';
-  return 'webm';
+  return mime.startsWith('video/mp4') ? 'mp4' : 'webm';
+}
+
+const EFFECT_FILTERS: Record<string, string> = {
+  blur:      'blur(4px)',
+  vhs:       'saturate(1.3) contrast(1.1) sepia(0.15) hue-rotate(-5deg)',
+  glitch:    'hue-rotate(90deg) saturate(2) contrast(1.5)',
+  bw:        'grayscale(1)',
+  cinematic: 'contrast(1.2) saturate(0.85) brightness(0.9) sepia(0.15)',
+  bloom:     'brightness(1.3) contrast(0.9) saturate(1.2) blur(0.5px)',
+  grain:     'contrast(1.1) saturate(0.9) brightness(1.05)',
+  chromatic: 'hue-rotate(5deg) saturate(1.5) contrast(1.1)',
+};
+
+function buildFilter(clip: Clip): string {
+  if (clip.effect && EFFECT_FILTERS[clip.effect]) return EFFECT_FILTERS[clip.effect];
+  if (clip.filterCss) return clip.filterCss;
+  const parts: string[] = [];
+  if (clip.brightness !== undefined && clip.brightness !== 100) parts.push(`brightness(${clip.brightness}%)`);
+  if (clip.contrast   !== undefined && clip.contrast   !== 100) parts.push(`contrast(${clip.contrast}%)`);
+  if (clip.saturation !== undefined && clip.saturation !== 100) parts.push(`saturate(${clip.saturation}%)`);
+  if (clip.blur       !== undefined && clip.blur       !== 0)   parts.push(`blur(${clip.blur}px)`);
+  return parts.join(' ') || 'none';
+}
+
+/** Wait for a video element to finish seeking */
+function waitForSeeked(el: HTMLVideoElement, timeoutMs = 500): Promise<void> {
+  return new Promise((resolve) => {
+    if (!isFinite(el.duration) || el.readyState >= 2) {
+      resolve(); return;
+    }
+    const tid = setTimeout(resolve, timeoutMs);
+    const cb  = () => { clearTimeout(tid); el.removeEventListener('seeked', cb); resolve(); };
+    el.addEventListener('seeked', cb, { once: true });
+  });
+}
+
+/** Resolve text-shadow preset key → CSS */
+function resolveTextShadow(ts: string | undefined, color: string): string | undefined {
+  if (!ts || ts === 'none') return undefined;
+  if (ts === 'soft')  return '0 2px 8px rgba(0,0,0,0.6)';
+  if (ts === 'hard')  return '2px 2px 0px rgba(0,0,0,0.9)';
+  if (ts === 'glow')  return `0 0 12px ${color}, 0 0 24px ${color}`;
+  if (ts === 'neon')  return `0 0 6px #fff, 0 0 12px ${color}, 0 0 30px ${color}`;
+  return ts; // raw CSS
+}
+
+/**
+ * Preload an <img> src and return the HTMLImageElement.
+ * Returns null on failure so callers can skip gracefully.
+ */
+function preloadImage(src: string): Promise<HTMLImageElement | null> {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload  = () => resolve(img);
+    img.onerror = () => resolve(null);
+    img.src = src;
+  });
+}
+
+// ─── canvas text drawing ───────────────────────────────────────────────────────
+/**
+ * Draw a text clip onto the export canvas.
+ * Mirrors OverlayLayer logic exactly: position = (x * W, y * H) center,
+ * size = (scaleX * W, scaleY * H).
+ */
+function drawTextClip(
+  ctx: CanvasRenderingContext2D,
+  clip: Clip,
+  exportW: number,
+  exportH: number,
+) {
+  const cx    = (clip.x ?? 0.5) * exportW;
+  const cy    = (clip.y ?? 0.5) * exportH;
+  const sw    = (clip.scaleX ?? 1.0) * exportW;
+  const sh    = (clip.scaleY ?? 1.0) * exportH;
+  const left  = cx - sw / 2;
+  const top   = cy - sh / 2;
+
+  // Same font-size scaling as OverlayLayer (canvasW / 1920)
+  const baseFontSize = Math.max(10, (clip.fontSize || 72) * exportW / 1920);
+  const fontWeight   = clip.fontWeight || 'bold';
+  const fontStyle    = clip.fontStyle  || 'normal';
+  const fontFamily   = clip.fontFamily || 'Inter, Arial, sans-serif';
+  const color        = clip.color      || '#FFFFFF';
+  const textAlign    = clip.textAlign  || 'center';
+  const rawText      = clip.text       || '';
+  const displayText  = clip.textUppercase ? rawText.toUpperCase() : rawText;
+  const letterSpacing = clip.letterSpacing ? clip.letterSpacing * exportW / 1920 : 0;
+  const lineHeight   = clip.lineHeight || 1.2;
+
+  ctx.save();
+
+  // Clip to the text box bounds (prevents overflow)
+  ctx.beginPath();
+  ctx.rect(left, top, sw, sh);
+  ctx.clip();
+
+  // Rotation
+  if (clip.rotation) {
+    ctx.translate(cx, cy);
+    ctx.rotate((clip.rotation * Math.PI) / 180);
+    ctx.translate(-cx, -cy);
+  }
+
+  // Opacity
+  ctx.globalAlpha = clip.opacity ?? 1;
+
+  // Text background box
+  if (clip.textBackground && clip.textBackground !== 'transparent') {
+    ctx.fillStyle = clip.textBackground;
+    ctx.beginPath();
+    ctx.roundRect(left, top, sw, sh, 4);
+    ctx.fill();
+  }
+
+  // Font
+  ctx.font = `${fontStyle} ${fontWeight} ${baseFontSize}px ${fontFamily}`;
+  ctx.fillStyle = color;
+  ctx.textBaseline = 'middle';
+  ctx.textAlign = textAlign as CanvasTextAlign;
+
+  // Text shadow
+  const ts = resolveTextShadow(clip.textShadow, color);
+  if (ts) {
+    // Parse first shadow from CSS string (e.g. "0 2px 8px rgba(0,0,0,0.6)")
+    const m = ts.match(/(-?[\d.]+)px\s+(-?[\d.]+)px\s+(-?[\d.]+)px\s+(.+)/);
+    if (m) {
+      ctx.shadowOffsetX = parseFloat(m[1]);
+      ctx.shadowOffsetY = parseFloat(m[2]);
+      ctx.shadowBlur    = parseFloat(m[3]);
+      ctx.shadowColor   = m[4];
+    }
+  }
+
+  // Outline (stroke)
+  if (clip.textOutline && clip.textOutlineWidth) {
+    ctx.strokeStyle   = clip.textOutline;
+    ctx.lineWidth     = clip.textOutlineWidth * exportW / 1920;
+    ctx.lineJoin      = 'round';
+  }
+
+  // X position based on alignment
+  let textX: number;
+  const padding = 8 * exportW / 1920;
+  if (textAlign === 'left')  textX = left + padding;
+  else if (textAlign === 'right') textX = left + sw - padding;
+  else textX = cx; // center
+
+  // Handle multi-line text + letter-spacing
+  const lines = displayText.split('\n');
+  const totalH = lines.length * baseFontSize * lineHeight;
+  let lineY = cy - totalH / 2 + (baseFontSize * lineHeight) / 2;
+
+  for (const line of lines) {
+    if (letterSpacing > 0) {
+      // Draw character by character for letter-spacing
+      // Measure total line width first
+      const chars = line.split('');
+      const totalLineW = chars.reduce((sum, ch) => sum + ctx.measureText(ch).width + letterSpacing, 0);
+      let charX = textAlign === 'center'
+        ? textX - totalLineW / 2
+        : textAlign === 'right'
+        ? textX - totalLineW
+        : textX;
+      for (const ch of chars) {
+        if (clip.textOutlineWidth && clip.textOutline) {
+          ctx.strokeText(ch, charX, lineY);
+        }
+        ctx.fillText(ch, charX, lineY);
+        charX += ctx.measureText(ch).width + letterSpacing;
+      }
+    } else {
+      if (clip.textOutlineWidth && clip.textOutline) {
+        ctx.strokeText(line, textX, lineY);
+      }
+      ctx.fillText(line, textX, lineY);
+    }
+    lineY += baseFontSize * lineHeight;
+  }
+
+  ctx.restore();
+}
+
+/**
+ * Draw an image clip onto the export canvas.
+ * Uses the same position/scale math as OverlayLayer.
+ */
+function drawImageClip(
+  ctx: CanvasRenderingContext2D,
+  clip: Clip,
+  img: HTMLImageElement,
+  exportW: number,
+  exportH: number,
+) {
+  const cx   = (clip.x ?? 0.5) * exportW;
+  const cy   = (clip.y ?? 0.5) * exportH;
+  const sw   = (clip.scaleX ?? 1.0) * exportW;
+  const sh   = (clip.scaleY ?? 1.0) * exportH;
+
+  ctx.save();
+
+  ctx.globalAlpha = clip.opacity ?? 1;
+
+  // Apply CSS filters (cannot do blur in canvas ctx easily, but brightness/contrast/sat work)
+  const filt = buildFilter(clip);
+  if (filt && filt !== 'none') {
+    // @ts-ignore — ctx.filter is standard but TS types lag
+    ctx.filter = filt;
+  }
+
+  if (clip.rotation) {
+    ctx.translate(cx, cy);
+    ctx.rotate((clip.rotation * Math.PI) / 180);
+    ctx.translate(-cx, -cy);
+  }
+
+  // Blend mode
+  if (clip.blendMode && clip.blendMode !== 'normal') {
+    ctx.globalCompositeOperation = clip.blendMode as GlobalCompositeOperation;
+  }
+
+  // object-fit: contain — maintain aspect ratio
+  const imgAR  = img.naturalWidth / img.naturalHeight;
+  const boxAR  = sw / sh;
+  let drawW: number, drawH: number;
+  if (imgAR > boxAR) {
+    drawW = sw;
+    drawH = sw / imgAR;
+  } else {
+    drawH = sh;
+    drawW = sh * imgAR;
+  }
+  const drawX = cx - drawW / 2;
+  const drawY = cy - drawH / 2;
+
+  ctx.drawImage(img, drawX, drawY, drawW, drawH);
+  ctx.restore();
+}
+
+/**
+ * Draw a video clip onto the export canvas.
+ * The wrapper element is positioned by OverlayLayer (overlay clips)
+ * or fills the canvas (main track clips).
+ */
+function drawVideoClip(
+  ctx: CanvasRenderingContext2D,
+  clip: Clip,
+  vid: HTMLVideoElement,
+  exportW: number,
+  exportH: number,
+  isMainTrack: boolean,
+) {
+  const filt = buildFilter(clip);
+  ctx.save();
+  ctx.globalAlpha = clip.opacity ?? 1;
+  if (filt && filt !== 'none') {
+    // @ts-ignore
+    ctx.filter = filt;
+  }
+
+  if (isMainTrack) {
+    // object-fit: cover
+    const vidAR = vid.videoWidth  / (vid.videoHeight || 1);
+    const boxAR = exportW / exportH;
+    let drawW: number, drawH: number, drawX: number, drawY: number;
+    if (vidAR > boxAR) {
+      drawH = exportH; drawW = exportH * vidAR;
+    } else {
+      drawW = exportW; drawH = exportW / vidAR;
+    }
+    drawX = (exportW - drawW) / 2;
+    drawY = (exportH - drawH) / 2;
+    ctx.drawImage(vid, drawX, drawY, drawW, drawH);
+  } else {
+    // Overlay clip — same position/scale as OverlayLayer CanvasElement
+    const cx  = (clip.x ?? 0.5) * exportW;
+    const cy  = (clip.y ?? 0.5) * exportH;
+    const sw  = (clip.scaleX ?? 1.0) * exportW;
+    const sh  = (clip.scaleY ?? 1.0) * exportH;
+
+    if (clip.rotation) {
+      ctx.translate(cx, cy);
+      ctx.rotate((clip.rotation * Math.PI) / 180);
+      ctx.translate(-cx, -cy);
+    }
+
+    // object-fit: contain
+    const vidAR = vid.videoWidth  / (vid.videoHeight || 1);
+    const boxAR = sw / sh;
+    let drawW: number, drawH: number;
+    if (vidAR > boxAR) { drawW = sw; drawH = sw / vidAR; }
+    else                { drawH = sh; drawW = sh * vidAR; }
+    ctx.drawImage(vid, cx - drawW / 2, cy - drawH / 2, drawW, drawH);
+  }
+
+  ctx.restore();
 }
 
 // ─── component ────────────────────────────────────────────────────────────────
 
 export default function ExportModal() {
-  const { showExportModal, setShowExportModal, project, currentTime, setCurrentTime, setIsPlaying } =
-    useEditorStore(
-      useShallow((s) => ({
-        showExportModal:    s.showExportModal,
-        setShowExportModal: s.setShowExportModal,
-        project:            s.project,
-        currentTime:        s.currentTime,
-        setCurrentTime:     s.setCurrentTime,
-        setIsPlaying:       s.setIsPlaying,
-      }))
-    );
+  const {
+    showExportModal, setShowExportModal,
+    project, mediaLibrary,
+    setCurrentTime, setIsPlaying,
+  } = useEditorStore(useShallow((s) => ({
+    showExportModal:    s.showExportModal,
+    setShowExportModal: s.setShowExportModal,
+    project:            s.project,
+    mediaLibrary:       s.mediaLibrary,
+    setCurrentTime:     s.setCurrentTime,
+    setIsPlaying:       s.setIsPlaying,
+  })));
 
   const [resolution, setResolution] = useState(RESOLUTIONS[1]);
   const [format,     setFormat]     = useState<typeof FORMATS[number]>('MP4');
@@ -58,10 +354,9 @@ export default function ExportModal() {
   const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
   const [fileName,    setFileName]   = useState('export.webm');
 
-  const cancelRef    = useRef(false);
-  const recorderRef  = useRef<MediaRecorder | null>(null);
+  const cancelRef   = useRef(false);
+  const recorderRef = useRef<MediaRecorder | null>(null);
 
-  // Reset on close
   useEffect(() => {
     if (!showExportModal) {
       setStatus('idle');
@@ -71,14 +366,11 @@ export default function ExportModal() {
     }
   }, [showExportModal]);
 
-  // Revoke blob URL when modal closes to avoid memory leaks
   useEffect(() => {
-    return () => {
-      if (downloadUrl) URL.revokeObjectURL(downloadUrl);
-    };
+    return () => { if (downloadUrl) URL.revokeObjectURL(downloadUrl); };
   }, [downloadUrl]);
 
-  // ─── real canvas-based export ──────────────────────────────────────────────
+  // ─── Core export ─────────────────────────────────────────────────────────────
   const handleExport = async () => {
     setStatus('exporting');
     setProgress(0);
@@ -86,23 +378,20 @@ export default function ExportModal() {
     cancelRef.current = false;
 
     try {
-      // 1. Find the preview canvas container (the black div in PreviewCanvas)
-      //    It has the persistent <video> elements inside VideoLayer.
-      const previewRoot = document.querySelector<HTMLDivElement>(
-        '[data-preview-canvas="root"]'
-      );
+      const exportW = resolution.w;
+      const exportH = resolution.h;
 
-      // 2. Create an offscreen canvas at target resolution
-      const canvas   = document.createElement('canvas');
-      canvas.width   = resolution.w;
-      canvas.height  = resolution.h;
-      const ctx      = canvas.getContext('2d', { alpha: false })!;
+      // ── 1. Create offscreen canvas ─────────────────────────────────────────
+      const canvas  = document.createElement('canvas');
+      canvas.width  = exportW;
+      canvas.height = exportH;
+      const ctx     = canvas.getContext('2d', { alpha: false })!;
 
-      // 3. Set up MediaRecorder on the canvas stream
-      const mime      = getMimeType(format);
-      const ext       = getExt(mime);
-      const stream    = canvas.captureStream(fps);
-      const recorder  = new MediaRecorder(stream, {
+      // ── 2. Set up MediaRecorder ────────────────────────────────────────────
+      const mime     = getMimeType(format);
+      const ext      = getExt(mime);
+      const stream   = canvas.captureStream(fps);
+      const recorder = new MediaRecorder(stream, {
         mimeType: mime,
         videoBitsPerSecond: bitrate * 1_000_000,
       });
@@ -116,103 +405,146 @@ export default function ExportModal() {
         recorder.onerror = (e) => reject(e);
       });
 
-      recorder.start(200); // collect data every 200 ms
+      recorder.start(100);
 
-      // 4. Seek the store to 0, pause real playback during export
+      // ── 3. Pause real playback ─────────────────────────────────────────────
       setIsPlaying(false);
-      setCurrentTime(0);
 
+      // ── 4. Get all clips from store ────────────────────────────────────────
+      const allClips  = project.tracks.flatMap((t) => t.clips);
+      const mainTrack = project.tracks.find((t) => t.type === 'video');
+
+      const videoClips = allClips.filter((c) => c.type === 'video');
+      const textClips  = allClips.filter((c) => c.type === 'text');
+      const imageClips = allClips.filter((c) => c.type === 'image');
+
+      // ── 5. Locate live <video> elements from the DOM ───────────────────────
+      // They are rendered in VideoLayer with persistent DOM mounting.
+      // We find them by matching the src attribute which includes clip.id as hash.
+      const previewRoot = document.querySelector<HTMLDivElement>('[data-preview-canvas="root"]');
+
+      // Build clipId → HTMLVideoElement map
+      // VideoLayer sets data-clip-id on every <video> element for reliable lookup.
+      const videoElMap = new Map<string, HTMLVideoElement>();
+      if (previewRoot) {
+        const videoEls = Array.from(previewRoot.querySelectorAll<HTMLVideoElement>('video[data-clip-id]'));
+        for (const vid of videoEls) {
+          const id = vid.dataset.clipId;
+          if (id) videoElMap.set(id, vid);
+        }
+        // Fallback: match by src hash if data-clip-id not present
+        if (videoElMap.size === 0) {
+          const allVids = Array.from(previewRoot.querySelectorAll<HTMLVideoElement>('video'));
+          for (const vid of allVids) {
+            const hash = vid.src.split('#')[1];
+            if (hash) videoElMap.set(hash, vid);
+          }
+        }
+      }
+
+      // ── 6. Preload all image sources ───────────────────────────────────────
+      const imageElMap = new Map<string, HTMLImageElement | null>();
+      await Promise.all(imageClips.map(async (clip) => {
+        const mediaSrc = clip.src
+          || (clip.mediaId ? mediaLibrary.find((m) => m.id === clip.mediaId)?.src : undefined);
+        if (mediaSrc) {
+          imageElMap.set(clip.id, await preloadImage(mediaSrc));
+        }
+      }));
+
+      // ── 7. Frame loop ──────────────────────────────────────────────────────
       const totalDuration = project.duration;
       const frameInterval = 1 / fps;
       let   exportTime    = 0;
 
-      // 5. Frame loop — advance exportTime, draw video frames
-      const drawFrame = () =>
-        new Promise<void>((resolve) => {
-          requestAnimationFrame(() => {
-            ctx.fillStyle = '#000';
-            ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-            if (previewRoot) {
-              // Find all <video> elements that are currently visible (opacity != 0)
-              const videos = Array.from(previewRoot.querySelectorAll<HTMLVideoElement>('video'));
-              for (const vid of videos) {
-                // Check wrapper visibility — MediaEngine sets opacity/visibility on parent
-                const wrapper = vid.closest<HTMLDivElement>('[style*="position: absolute"]');
-                const wrapperOpacity = wrapper
-                  ? parseFloat(getComputedStyle(wrapper).opacity || '0')
-                  : 1;
-                if (wrapperOpacity < 0.01) continue;
-                if (vid.readyState < 2)    continue;
-                try {
-                  ctx.globalAlpha = wrapperOpacity;
-                  ctx.drawImage(vid, 0, 0, canvas.width, canvas.height);
-                  ctx.globalAlpha = 1;
-                } catch {
-                  // cross-origin or not-ready — skip frame
-                }
-              }
-            } else {
-              // Fallback: render a placeholder gradient so recording still produces output
-              const grad = ctx.createLinearGradient(0, 0, canvas.width, canvas.height);
-              grad.addColorStop(0, '#1e1b4b');
-              grad.addColorStop(1, '#312e81');
-              ctx.fillStyle = grad;
-              ctx.fillRect(0, 0, canvas.width, canvas.height);
-              ctx.fillStyle = 'rgba(255,255,255,0.6)';
-              ctx.font = `bold ${canvas.height * 0.04}px Inter, sans-serif`;
-              ctx.textAlign = 'center';
-              ctx.fillText(project.name, canvas.width / 2, canvas.height / 2);
-            }
-
-            resolve();
-          });
-        });
-
-      // Seek video elements to correct time for each frame
-      const seekVideos = async (t: number) => {
-        if (!previewRoot) return;
-        const videos = Array.from(previewRoot.querySelectorAll<HTMLVideoElement>('video'));
-        const seeks  = videos.map(
-          (vid) =>
-            new Promise<void>((res) => {
-              if (!isFinite(vid.duration) || vid.duration === 0) { res(); return; }
-              // Each clip has trimStart stored on the clip — we approximate
-              // by using the current src time which MediaEngine manages.
-              // For export we just ensure the video is at the right relative time.
-              const wrapper = vid.closest<HTMLDivElement>('[style*="position: absolute"]');
-              const visible  = wrapper
-                ? parseFloat(getComputedStyle(wrapper).opacity || '0') > 0.01
-                : true;
-              if (!visible) { res(); return; }
-
-              const target = vid.currentTime; // MediaEngine already handles seek
-              if (Math.abs(vid.currentTime - target) < 0.05) { res(); return; }
-              const onSeeked = () => { vid.removeEventListener('seeked', onSeeked); res(); };
-              vid.addEventListener('seeked', onSeeked, { once: true });
-              vid.currentTime = target;
-              // Safety timeout
-              setTimeout(res, 200);
-            })
-        );
-        await Promise.all(seeks);
-      };
-
-      // 6. Update store time (triggers MediaEngine to show/hide clips)
-      //    We use a small sleep to let the engine settle on each frame.
-      const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
-
       while (exportTime <= totalDuration && !cancelRef.current) {
-        // Advance store time — MediaEngine reacts imperatively
-        setCurrentTime(exportTime);
 
-        // Give MediaEngine a tick to update DOM visibility
-        await sleep(1000 / fps < 40 ? 40 : 1000 / fps);
-        await seekVideos(exportTime);
-        await drawFrame();
+        // ── 7a. Seek each video clip to the correct source time ──────────────
+        const seekPromises: Promise<void>[] = [];
+
+        for (const clip of videoClips) {
+          const isActive = exportTime >= clip.startTime && exportTime < clip.startTime + clip.duration;
+          const vid = videoElMap.get(clip.id);
+          if (!vid) continue;
+
+          if (!isActive) {
+            // Hide off-screen clips during export
+            vid.parentElement && (vid.parentElement.style.opacity = '0');
+            continue;
+          }
+
+          // Compute source time: trimStart + elapsed_in_clip * speed
+          const speed       = clip.speed ?? 1;
+          const trimStart   = clip.trimStart ?? 0;
+          const elapsedInClip = (exportTime - clip.startTime) * speed;
+          const targetTime  = trimStart + elapsedInClip;
+          const clampedTime = Math.max(0, Math.min(vid.duration || targetTime, targetTime));
+
+          if (Math.abs(vid.currentTime - clampedTime) > 0.02) {
+            vid.currentTime = clampedTime;
+            seekPromises.push(waitForSeeked(vid, 400));
+          }
+        }
+
+        // Wait for all seeks to complete
+        if (seekPromises.length > 0) await Promise.all(seekPromises);
+
+        // Give browser a frame to decode (rAF settle)
+        await new Promise<void>((r) => requestAnimationFrame(() => r()));
+
+        // ── 7b. Draw frame ───────────────────────────────────────────────────
+        ctx.fillStyle = '#000000';
+        ctx.fillRect(0, 0, exportW, exportH);
+
+        // Draw main-track video clips first (bottom layer)
+        for (const clip of videoClips) {
+          const isActive = exportTime >= clip.startTime && exportTime < clip.startTime + clip.duration;
+          if (!isActive) continue;
+          const vid = videoElMap.get(clip.id);
+          if (!vid || vid.readyState < 2) continue;
+
+          const isMainTrack = clip.trackId === mainTrack?.id;
+          // Only draw main track here (overlays drawn after text/image — they go on top)
+          if (isMainTrack) {
+            try {
+              drawVideoClip(ctx, clip, vid, exportW, exportH, true);
+            } catch { /* cross-origin / not-ready */ }
+          }
+        }
+
+        // Draw overlay video clips (on top of main but behind text)
+        for (const clip of videoClips) {
+          const isActive = exportTime >= clip.startTime && exportTime < clip.startTime + clip.duration;
+          if (!isActive) continue;
+          const vid = videoElMap.get(clip.id);
+          if (!vid || vid.readyState < 2) continue;
+          const isMainTrack = clip.trackId === mainTrack?.id;
+          if (!isMainTrack) {
+            try {
+              drawVideoClip(ctx, clip, vid, exportW, exportH, false);
+            } catch { /* skip */ }
+          }
+        }
+
+        // Draw image clips
+        for (const clip of imageClips) {
+          const isActive = exportTime >= clip.startTime && exportTime < clip.startTime + clip.duration;
+          if (!isActive) continue;
+          const img = imageElMap.get(clip.id);
+          if (!img) continue;
+          drawImageClip(ctx, clip, img, exportW, exportH);
+        }
+
+        // Draw text clips (top layer)
+        for (const clip of textClips) {
+          const isActive = exportTime >= clip.startTime && exportTime < clip.startTime + clip.duration;
+          if (!isActive) continue;
+          drawTextClip(ctx, clip, exportW, exportH);
+        }
 
         exportTime += frameInterval;
         setProgress(Math.min(99, (exportTime / totalDuration) * 100));
+        setCurrentTime(exportTime);
       }
 
       if (cancelRef.current) {
@@ -222,7 +554,7 @@ export default function ExportModal() {
         return;
       }
 
-      // 7. Finish recording
+      // ── 8. Finish ─────────────────────────────────────────────────────────
       recorder.stop();
       stream.getTracks().forEach((t) => t.stop());
 
@@ -234,9 +566,8 @@ export default function ExportModal() {
       setFileName(name);
       setProgress(100);
       setStatus('done');
-
-      // Restore playhead to where it was
       setCurrentTime(0);
+
     } catch (err: unknown) {
       console.error('[Export] failed:', err);
       setErrorMsg(err instanceof Error ? err.message : String(err));
@@ -251,8 +582,8 @@ export default function ExportModal() {
 
   const handleDownload = () => {
     if (!downloadUrl) return;
-    const a  = document.createElement('a');
-    a.href   = downloadUrl;
+    const a = document.createElement('a');
+    a.href = downloadUrl;
     a.download = fileName;
     a.click();
   };
@@ -296,7 +627,7 @@ export default function ExportModal() {
               </button>
             </div>
 
-            {/* ── Done state ───────────────────────────────────────────────── */}
+            {/* ── Done ─────────────────────────────────────────────────────── */}
             {status === 'done' ? (
               <div className="p-8 flex flex-col items-center gap-4 text-center">
                 <motion.div
@@ -329,7 +660,7 @@ export default function ExportModal() {
                 </div>
               </div>
 
-            /* ── Exporting state ─────────────────────────────────────────── */
+            /* ── Exporting ───────────────────────────────────────────────── */
             ) : status === 'exporting' ? (
               <div className="p-8 flex flex-col items-center gap-4 text-center">
                 <div className="relative">
@@ -354,7 +685,7 @@ export default function ExportModal() {
                     />
                   </div>
                   <div className="text-[11px] text-gray-400 mt-1.5">
-                    Frame-accurate canvas capture in progress
+                    Frame-accurate canvas render in progress
                   </div>
                 </div>
                 <button
@@ -365,7 +696,7 @@ export default function ExportModal() {
                 </button>
               </div>
 
-            /* ── Idle / settings state ───────────────────────────────────── */
+            /* ── Settings ────────────────────────────────────────────────── */
             ) : (
               <div className="p-5 space-y-4">
                 {errorMsg && (
@@ -396,7 +727,7 @@ export default function ExportModal() {
                     <button
                       disabled
                       className="flex-1 py-2 text-xs font-medium rounded-lg border-2 border-gray-100 text-gray-300 cursor-not-allowed"
-                      title="GIF export not supported in browser"
+                      title="GIF not supported in browser"
                     >
                       GIF
                     </button>
@@ -420,9 +751,7 @@ export default function ExportModal() {
                         }`}
                       >
                         <div className="font-bold">{r.label.split(' ')[0]}</div>
-                        <div className="text-[9px] text-gray-400">
-                          {r.w}×{r.h}
-                        </div>
+                        <div className="text-[9px] text-gray-400">{r.w}×{r.h}</div>
                       </button>
                     ))}
                   </div>

@@ -49,6 +49,16 @@ export interface Clip {
   fontSize?: number;
   fontFamily?: string;
   color?: string;
+  fontWeight?: 'normal' | 'bold' | '100' | '200' | '300' | '400' | '500' | '600' | '700' | '800' | '900';
+  fontStyle?: 'normal' | 'italic';
+  textAlign?: 'left' | 'center' | 'right';
+  letterSpacing?: number;   // px
+  lineHeight?: number;      // multiplier e.g. 1.2
+  textShadow?: string;      // CSS text-shadow string or preset key
+  textBackground?: string;  // background color for text box (hex or rgba)
+  textOutline?: string;     // CSS stroke color e.g. '#000000'
+  textOutlineWidth?: number; // stroke width in px
+  textUppercase?: boolean;
   effect?: string;
   filterCss?: string; // raw CSS filter string from filter presets
   transition?: string;

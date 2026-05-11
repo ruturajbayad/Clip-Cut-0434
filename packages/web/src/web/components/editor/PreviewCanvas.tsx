@@ -207,6 +207,8 @@ export default function PreviewCanvas() {
               onVideoRef={onVideoRef}
               onWrapperRef={onWrapperRef}
               mainTrackId={mainVideoTrack?.id}
+              canvasW={canvasSize.w}
+              canvasH={canvasSize.h}
             />
 
             {/*

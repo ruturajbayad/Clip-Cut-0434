@@ -53,6 +53,8 @@ interface VideoLayerProps {
   onVideoRef: (clipId: string, el: HTMLVideoElement | null) => void;
   onWrapperRef: (clipId: string, el: HTMLDivElement | null) => void;
   mainTrackId: string | undefined;
+  canvasW?: number;
+  canvasH?: number;
 }
 
 /**
@@ -65,41 +67,73 @@ const VideoItem = memo(function VideoItem({
   isOverlay,
   onVideoRef,
   onWrapperRef,
+  canvasW,
+  canvasH,
 }: {
   clip: Clip;
   media: MediaItem | undefined;
   isOverlay: boolean;
   onVideoRef: (clipId: string, el: HTMLVideoElement | null) => void;
   onWrapperRef: (clipId: string, el: HTMLDivElement | null) => void;
+  canvasW?: number;
+  canvasH?: number;
 }) {
-  const videoElRef = useRef<HTMLVideoElement | null>(null);
+  const videoElRef  = useRef<HTMLVideoElement | null>(null);
+  const wrapperRef  = useRef<HTMLDivElement | null>(null);
 
-  // Subscribe to filter/opacity-relevant clip props and apply them imperatively
-  // so we don't trigger full React re-renders on every slider move.
+  // Subscribe to filter/opacity/position changes and apply them imperatively.
+  // This avoids React re-renders on every slider move or drag update.
   useEffect(() => {
-    const apply = (c: Clip) => {
+    const applyToVideo = (c: Clip) => {
       const el = videoElRef.current;
       if (el) {
-        el.style.filter = buildFilter(c);
-        // Apply clip opacity to the video element itself.
-        // The wrapper opacity is controlled by MediaEngine (0=hidden, 1=visible).
+        el.style.filter  = buildFilter(c);
         el.style.opacity = String(c.opacity ?? 1);
       }
     };
-    // Apply immediately on mount
-    apply(clip);
-    // Subscribe to store changes and re-apply whenever THIS clip changes
+
+    const applyToWrapper = (c: Clip, cw: number, ch: number) => {
+      const el = wrapperRef.current;
+      if (!el) return;
+      if (isOverlay) {
+        // Position the wrapper to match CanvasElement geometry
+        const cx  = (c.x ?? 0.5) * cw;
+        const cy  = (c.y ?? 0.5) * ch;
+        const sw  = (c.scaleX ?? 1.0) * cw;
+        const sh  = (c.scaleY ?? 1.0) * ch;
+        const rot = c.rotation ?? 0;
+        el.style.inset     = 'unset';
+        el.style.left      = `${cx - sw / 2}px`;
+        el.style.top       = `${cy - sh / 2}px`;
+        el.style.width     = `${sw}px`;
+        el.style.height    = `${sh}px`;
+        el.style.transform = `rotate(${rot}deg) translateZ(0)`;
+      }
+      // Main track always inset:0 (no repositioning)
+    };
+
+    applyToVideo(clip);
+    if (canvasW && canvasH) applyToWrapper(clip, canvasW, canvasH);
+
     const unsub = useEditorStore.subscribe((state) => {
       const updated = state.project.tracks.flatMap((t) => t.clips).find((c) => c.id === clip.id);
-      if (updated) apply(updated);
+      if (updated) {
+        applyToVideo(updated);
+        const cw = canvasW ?? wrapperRef.current?.parentElement?.clientWidth ?? 0;
+        const ch = canvasH ?? wrapperRef.current?.parentElement?.clientHeight ?? 0;
+        if (cw && ch) applyToWrapper(updated, cw, ch);
+      }
     });
     return unsub;
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [clip.id]);
+  }, [clip.id, isOverlay]);
 
   return (
     <div
-      ref={(el) => onWrapperRef(clip.id, el)}
+      ref={(el) => {
+        wrapperRef.current = el;
+        onWrapperRef(clip.id, el);
+      }}
       style={{
         // IMPORTANT: Start hidden via opacity, NOT display:none.
         // display:none destroys the GPU compositor layer → flash when re-shown.
@@ -108,13 +142,16 @@ const VideoItem = memo(function VideoItem({
         opacity: 0,
         visibility: 'hidden',
         position: 'absolute',
-        inset: 0,
+        // Main-track: fill canvas. Overlay: positioned dynamically via subscription above.
+        ...(isOverlay ? {} : { inset: 0 }),
         zIndex: isOverlay ? 12 : 10,
         // Force GPU compositor layer promotion immediately on mount.
-        // Eliminates the layout+paint+GPU-upload cost when we switch opacity.
         willChange: 'opacity, transform',
         transform: 'translateZ(0)',
         pointerEvents: 'none',
+        // Overflow hidden so video doesn't bleed outside bounds
+        overflow: isOverlay ? 'hidden' : undefined,
+        borderRadius: isOverlay ? 4 : undefined,
       }}
     >
       {media?.type === 'video' ? (
@@ -126,6 +163,7 @@ const VideoItem = memo(function VideoItem({
             if (el) el.style.filter = buildFilter(clip);
           }}
           src={`${media.src}#${clip.id}`}
+          data-clip-id={clip.id}
           className="w-full h-full"
           style={{
             objectFit: isOverlay ? 'contain' : 'cover',
@@ -164,6 +202,8 @@ export const VideoLayer = memo(function VideoLayer({
   onVideoRef,
   onWrapperRef,
   mainTrackId,
+  canvasW,
+  canvasH,
 }: VideoLayerProps) {
   return (
     <>
@@ -183,6 +223,8 @@ export const VideoLayer = memo(function VideoLayer({
             isOverlay={isOverlay}
             onVideoRef={onVideoRef}
             onWrapperRef={onWrapperRef}
+            canvasW={canvasW}
+            canvasH={canvasH}
           />
         );
       })}

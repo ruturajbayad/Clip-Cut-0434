@@ -326,7 +326,8 @@ export default function RightPanel() {
       {/* ── Text properties ── */}
       {selectedClip.type === 'text' && (
         <Section title="Text" icon={Type}>
-          <div className="space-y-2">
+          <div className="space-y-2.5">
+            {/* Content */}
             <div>
               <label className="text-[10px] text-gray-500 mb-1 block">Content</label>
               <textarea
@@ -337,30 +338,194 @@ export default function RightPanel() {
                 style={{ outlineColor: ACCENT }}
               />
             </div>
-            <div>
-              <label className="text-[10px] text-gray-500 mb-1 block">Font</label>
-              <select
-                value={selectedClip.fontFamily || 'Inter'}
-                onChange={(e) => update('fontFamily', e.target.value)}
-                className="w-full text-xs px-2 py-1.5 border border-gray-200 rounded outline-none bg-white"
-                style={{ outlineColor: ACCENT }}
-              >
-                {['Inter', 'Georgia', 'Playfair Display', 'Space Grotesk', 'Raleway', 'Merriweather'].map(f => (
-                  <option key={f} value={f}>{f}</option>
-                ))}
-              </select>
-            </div>
-            <SliderProp label="Size" value={selectedClip.fontSize || 72} min={12} max={200} step={1} unit="px" onChange={(v) => update('fontSize', v)} />
-            <div>
-              <label className="text-[10px] text-gray-500 mb-1 block">Color</label>
-              <div className="flex items-center gap-2">
+
+            {/* Font + Size */}
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className="text-[10px] text-gray-500 mb-1 block">Font</label>
+                <select
+                  value={selectedClip.fontFamily || 'Inter'}
+                  onChange={(e) => update('fontFamily', e.target.value)}
+                  className="w-full text-xs px-2 py-1.5 border border-gray-200 rounded outline-none bg-white"
+                  style={{ outlineColor: ACCENT }}
+                >
+                  {['Inter', 'Georgia', 'Playfair Display', 'Space Grotesk', 'Raleway', 'Merriweather'].map(f => (
+                    <option key={f} value={f}>{f}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="text-[10px] text-gray-500 mb-1 block">Size</label>
                 <input
-                  type="color"
-                  value={selectedClip.color || '#FFFFFF'}
-                  onChange={(e) => update('color', e.target.value)}
-                  className="w-7 h-7 rounded border border-gray-200 cursor-pointer"
+                  type="number"
+                  value={selectedClip.fontSize || 72}
+                  onChange={(e) => update('fontSize', parseInt(e.target.value) || 72)}
+                  className="w-full text-xs px-2 py-1.5 border border-gray-200 rounded outline-none bg-white text-gray-800"
+                  min={8} max={400}
+                  style={{ outlineColor: ACCENT }}
                 />
-                <span className="text-[11px] font-mono text-gray-600">{selectedClip.color || '#FFFFFF'}</span>
+              </div>
+            </div>
+
+            {/* Bold / Italic / Uppercase row */}
+            <div className="flex items-center gap-1.5">
+              <button
+                onClick={() => update('fontWeight', selectedClip.fontWeight === 'bold' ? 'normal' : 'bold')}
+                className="flex-1 py-1 rounded border text-xs font-bold transition-colors"
+                style={{
+                  borderColor: (selectedClip.fontWeight ?? 'bold') === 'bold' ? ACCENT : '#e5e7eb',
+                  background: (selectedClip.fontWeight ?? 'bold') === 'bold' ? `${ACCENT}15` : 'transparent',
+                  color: (selectedClip.fontWeight ?? 'bold') === 'bold' ? ACCENT : '#6b7280',
+                }}
+              >B</button>
+              <button
+                onClick={() => update('fontStyle', selectedClip.fontStyle === 'italic' ? 'normal' : 'italic')}
+                className="flex-1 py-1 rounded border text-xs italic transition-colors"
+                style={{
+                  borderColor: selectedClip.fontStyle === 'italic' ? ACCENT : '#e5e7eb',
+                  background: selectedClip.fontStyle === 'italic' ? `${ACCENT}15` : 'transparent',
+                  color: selectedClip.fontStyle === 'italic' ? ACCENT : '#6b7280',
+                }}
+              >I</button>
+              <button
+                onClick={() => update('textUppercase', !selectedClip.textUppercase)}
+                className="flex-1 py-1 rounded border text-[10px] font-bold transition-colors"
+                style={{
+                  borderColor: selectedClip.textUppercase ? ACCENT : '#e5e7eb',
+                  background: selectedClip.textUppercase ? `${ACCENT}15` : 'transparent',
+                  color: selectedClip.textUppercase ? ACCENT : '#6b7280',
+                }}
+              >AA</button>
+            </div>
+
+            {/* Alignment */}
+            <div>
+              <label className="text-[10px] text-gray-500 mb-1 block">Alignment</label>
+              <div className="flex gap-1">
+                {(['left', 'center', 'right'] as const).map((align) => (
+                  <button
+                    key={align}
+                    onClick={() => update('textAlign', align)}
+                    className="flex-1 py-1 rounded border text-[10px] transition-colors capitalize"
+                    style={{
+                      borderColor: (selectedClip.textAlign ?? 'center') === align ? ACCENT : '#e5e7eb',
+                      background: (selectedClip.textAlign ?? 'center') === align ? `${ACCENT}15` : 'transparent',
+                      color: (selectedClip.textAlign ?? 'center') === align ? ACCENT : '#6b7280',
+                    }}
+                  >{align === 'left' ? '⬅' : align === 'center' ? '↔' : '➡'}</button>
+                ))}
+              </div>
+            </div>
+
+            {/* Color + Background color */}
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className="text-[10px] text-gray-500 mb-1 block">Text Color</label>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="color"
+                    value={selectedClip.color || '#FFFFFF'}
+                    onChange={(e) => update('color', e.target.value)}
+                    className="w-7 h-7 rounded border border-gray-200 cursor-pointer flex-shrink-0"
+                  />
+                  <span className="text-[10px] font-mono text-gray-600">{selectedClip.color || '#FFFFFF'}</span>
+                </div>
+              </div>
+              <div>
+                <label className="text-[10px] text-gray-500 mb-1 block">Background</label>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="color"
+                    value={selectedClip.textBackground || '#00000000'}
+                    onChange={(e) => update('textBackground', e.target.value)}
+                    className="w-7 h-7 rounded border border-gray-200 cursor-pointer flex-shrink-0"
+                  />
+                  <button
+                    onClick={() => update('textBackground', '')}
+                    className="text-[9px] text-gray-400 hover:text-red-400 transition-colors"
+                  >clear</button>
+                </div>
+              </div>
+            </div>
+
+            {/* Outline */}
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className="text-[10px] text-gray-500 mb-1 block">Outline Color</label>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="color"
+                    value={selectedClip.textOutline || '#000000'}
+                    onChange={(e) => update('textOutline', e.target.value)}
+                    className="w-7 h-7 rounded border border-gray-200 cursor-pointer flex-shrink-0"
+                  />
+                  <button
+                    onClick={() => { update('textOutline', ''); update('textOutlineWidth', 0); }}
+                    className="text-[9px] text-gray-400 hover:text-red-400 transition-colors"
+                  >clear</button>
+                </div>
+              </div>
+              <div>
+                <label className="text-[10px] text-gray-500 mb-1 block">Outline Width</label>
+                <input
+                  type="number"
+                  value={selectedClip.textOutlineWidth || 0}
+                  onChange={(e) => update('textOutlineWidth', parseFloat(e.target.value) || 0)}
+                  className="w-full text-xs px-2 py-1.5 border border-gray-200 rounded outline-none bg-white text-gray-800"
+                  min={0} max={20} step={0.5}
+                  style={{ outlineColor: ACCENT }}
+                />
+              </div>
+            </div>
+
+            {/* Shadow preset */}
+            <div>
+              <label className="text-[10px] text-gray-500 mb-1 block">Shadow</label>
+              <div className="flex gap-1 flex-wrap">
+                {[
+                  { key: 'none', label: 'None' },
+                  { key: 'soft', label: 'Soft' },
+                  { key: 'hard', label: 'Hard' },
+                  { key: 'glow', label: 'Glow' },
+                  { key: 'neon', label: 'Neon' },
+                ].map(({ key, label }) => (
+                  <button
+                    key={key}
+                    onClick={() => update('textShadow', key)}
+                    className="px-2 py-0.5 rounded text-[10px] border transition-colors"
+                    style={{
+                      borderColor: (selectedClip.textShadow ?? 'soft') === key ? ACCENT : '#e5e7eb',
+                      color: (selectedClip.textShadow ?? 'soft') === key ? ACCENT : '#6b7280',
+                      background: (selectedClip.textShadow ?? 'soft') === key ? `${ACCENT}10` : 'transparent',
+                    }}
+                  >{label}</button>
+                ))}
+              </div>
+            </div>
+
+            {/* Letter spacing + Line height */}
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className="text-[10px] text-gray-500 mb-1 block">Letter Spacing</label>
+                <input
+                  type="number"
+                  value={selectedClip.letterSpacing || 0}
+                  onChange={(e) => update('letterSpacing', parseFloat(e.target.value) || 0)}
+                  className="w-full text-xs px-2 py-1.5 border border-gray-200 rounded outline-none bg-white text-gray-800"
+                  min={-10} max={50} step={0.5}
+                  style={{ outlineColor: ACCENT }}
+                />
+              </div>
+              <div>
+                <label className="text-[10px] text-gray-500 mb-1 block">Line Height</label>
+                <input
+                  type="number"
+                  value={selectedClip.lineHeight || 1.2}
+                  onChange={(e) => update('lineHeight', parseFloat(e.target.value) || 1.2)}
+                  className="w-full text-xs px-2 py-1.5 border border-gray-200 rounded outline-none bg-white text-gray-800"
+                  min={0.5} max={4} step={0.1}
+                  style={{ outlineColor: ACCENT }}
+                />
               </div>
             </div>
           </div>
