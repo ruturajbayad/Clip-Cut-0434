@@ -150,6 +150,7 @@ export class MediaEngine {
   play() {
     if (this._playing) return;
     this._playing = true;
+    this._unlock();
     this.lastRafTs = performance.now();
     this.lastUiTs = performance.now();
     this._startLoop();
@@ -542,44 +543,29 @@ export class MediaEngine {
 
       if (this._playing) {
         if (el.paused) {
-          // If element hasn't loaded at all, kick load() first
           if (el.readyState < 1) {
             el.load();
           }
 
-          // Seek to position if meaningfully off
-          if (el.readyState >= 1 && Math.abs(el.currentTime - safeTime) > 0.08) {
+          if (Math.abs(el.currentTime - safeTime) > 0.08) {
             el.currentTime = safeTime;
           }
 
-          const tryPlay = () => {
-            if (!this._playing) return;
-            el.playbackRate = speed;
-            el.play().catch((err) => this.opts.onError?.(clip.id, err));
-          };
-
-          if (el.readyState >= 3) {
-            tryPlay();
-          } else {
-            el.addEventListener('canplay', () => tryPlay(), { once: true });
-          }
-        } else {
-          // Already playing — only correct large drift, never during seeking
           el.playbackRate = speed;
-          if (el.readyState >= 3 && !el.seeking) {
+          el.play().catch((err) => this.opts.onError?.(clip.id, err));
+        } else {
+          el.playbackRate = speed;
+          if (!el.seeking) {
             const drift = Math.abs(el.currentTime - safeTime);
-            if (drift > 0.5) el.currentTime = safeTime;
+            if (drift > 1.0) el.currentTime = safeTime;
           }
         }
       } else {
-        // Paused — ensure element is loading and seeked to the right position.
         if (!el.paused) el.pause();
         if (el.readyState < 1) {
-          // Element hasn't started loading at all — kick it.
-          // This triggers network fetch and will fire canplay, unblocking _gateReveal.
           el.load();
-        } else if (!el.seeking && Math.abs(el.currentTime - safeTime) > 0.08) {
-          // Loaded but at wrong position — seek.
+        }
+        if (!el.seeking && Math.abs(el.currentTime - safeTime) > 0.08) {
           el.currentTime = safeTime;
         }
       }
