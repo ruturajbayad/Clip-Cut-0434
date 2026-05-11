@@ -59,6 +59,7 @@ export class MediaEngine {
   private rafId = 0;
   private lastRafTs = 0;
   private lastUiTs = 0;
+  private _pendingSyncTimer = 0; // debounce timer for post-registration sync
 
   private _time = 0;
   private _playing = false;
@@ -96,7 +97,9 @@ export class MediaEngine {
   setProject(project: Project, library: MediaItem[]) {
     this._project = project;
     this._library = library;
-    if (!this._playing) this._syncFrame(this._time);
+    // Use debounced sync so project updates and DOM registrations settle before evaluating.
+    // If playing, the RAF loop will pick up the new project immediately.
+    if (!this._playing) this._scheduleSync();
   }
 
   registerVideo(clipId: string, el: HTMLVideoElement) {
@@ -104,6 +107,8 @@ export class MediaEngine {
     el.playsInline = true;
     el.preload = 'auto';
     this.videoEls.set(clipId, el);
+    // Debounced sync: batch all registrations from one React render into a single _syncFrame
+    this._scheduleSync();
   }
 
   unregisterVideo(clipId: string) {
@@ -126,6 +131,16 @@ export class MediaEngine {
 
   registerWrapper(clipId: string, el: HTMLElement) {
     this.wrapperEls.set(clipId, el);
+    // If this clip was already revealed before its wrapper registered,
+    // apply visibility now so it doesn't stay hidden forever.
+    if (this._revealedClips.has(clipId)) {
+      this._setWrapperVisible(el);
+    } else {
+      // Start hidden — MediaEngine will reveal via _gateReveal when active
+      this._setWrapperHidden(el);
+    }
+    // Debounced sync: re-evaluate all clips after registrations settle
+    this._scheduleSync();
   }
 
   unregisterWrapper(clipId: string) {
@@ -156,16 +171,24 @@ export class MediaEngine {
     this._pendingReveal.clear();
     this._revealedClips.clear();
     this._staleClips.clear();
-    // Reset entry transition transforms on all wrappers
-    this.wrapperEls.forEach((wrapper) => {
-      wrapper.style.transform = 'translateZ(0)';
-    });
+    // NOTE: do NOT reset wrapper transforms on seek — VideoLayer's subscription
+    // owns left/top/width/height/transform and will reapply after the store updates.
     this._syncFrame(this._time);
     if (!this._playing) this.opts.onTimeUpdate(this._time);
   }
 
+  /** Debounced sync — batch all registrations from one React render into one _syncFrame */
+  private _scheduleSync() {
+    if (this._pendingSyncTimer) return; // already scheduled
+    this._pendingSyncTimer = window.setTimeout(() => {
+      this._pendingSyncTimer = 0;
+      if (!this._playing) this._syncFrame(this._time);
+    }, 50); // 50ms: enough for all React useEffect/ref callbacks to settle
+  }
+
   destroy() {
     cancelAnimationFrame(this.rafId);
+    window.clearTimeout(this._pendingSyncTimer);
     window.removeEventListener('click', this._unlock);
     window.removeEventListener('keydown', this._unlock);
     this.videoEls.forEach((el) => el.pause());
@@ -378,6 +401,23 @@ export class MediaEngine {
 
   private _doReveal(clipId: string, wrapper: HTMLElement) {
     this._pendingReveal.delete(clipId);
+
+    // Guard: only reveal if this clip is still active at the current time.
+    // rVFC/canplay may fire after a seek that moved time past the clip's end.
+    const clip = this._project?.tracks.flatMap((t) => t.clips).find((c) => c.id === clipId);
+    const isStillActive = clip
+      ? this._time >= clip.startTime && this._time < clip.startTime + clip.duration
+      : false;
+
+    if (!isStillActive) {
+      // Clip already ended by the time rVFC fired — don't reveal, just hide.
+      // Add to revealedClips so _syncFrame's Pass 1 won't call _gateReveal again next frame.
+      // _syncFrame Pass 2 will then correctly hide it since isActive=false.
+      this._revealedClips.add(clipId);
+      this._setWrapperHidden(wrapper);
+      return;
+    }
+
     this._revealedClips.add(clipId);
     this._setWrapperVisible(wrapper);
 
@@ -393,46 +433,61 @@ export class MediaEngine {
   }
 
   // ─── Entry transition helper ──────────────────────────────────────────────────
+  // IMPORTANT: this helper must NEVER write wrapper.style.opacity (owned by
+  // _setWrapperVisible/_setWrapperHidden) and must NEVER write wrapper.style.transform
+  // (owned by VideoLayer's Zustand subscription which positions the wrapper).
+  // Instead we apply the entry effect to the VIDEO element's child (the <video>/<img>)
+  // via a CSS variable on the wrapper that VideoLayer's inner element can pick up,
+  // OR — simplest + most robust — we apply it to the wrapper's `filter` and a
+  // separate `--entry-opacity` custom property that doesn't conflict with position.
+  //
+  // Actual approach: apply to the first child element of the wrapper (the <video> tag).
+  // The wrapper itself is position-controlled by VideoLayer.
 
   private _ENTRY_DUR = 0.5; // seconds
 
   private _applyEntryTransition(wrapper: HTMLElement, clip: Clip, time: number) {
     const entry = clip.entryTransition ?? 'none';
-    if (entry === 'none') {
-      // Reset any leftover transforms
-      wrapper.style.transform = 'translateZ(0)';
-      wrapper.style.opacity = '1';
+    // Target the inner <video> or <img> child, not the wrapper itself
+    const inner = wrapper.firstElementChild as HTMLElement | null;
+
+    if (entry === 'none' || !inner) {
+      if (inner) {
+        inner.style.opacity = '';
+        inner.style.transform = '';
+      }
       return;
     }
+
     const elapsed = time - clip.startTime;
     if (elapsed >= this._ENTRY_DUR) {
-      wrapper.style.transform = 'translateZ(0)';
-      wrapper.style.opacity = '1';
+      inner.style.opacity = '';
+      inner.style.transform = '';
       return;
     }
+
     const t = Math.max(0, Math.min(1, elapsed / this._ENTRY_DUR));
     switch (entry) {
       case 'fade-in':
-        // MediaEngine already controls opacity via _setWrapperVisible; apply inline opacity on the video child
-        wrapper.style.transform = 'translateZ(0)';
-        wrapper.style.opacity = String(t);
+        inner.style.opacity = String(t);
+        inner.style.transform = '';
         break;
       case 'slide-up': {
         const dy = (1 - t) * 40;
-        wrapper.style.transform = `translateY(${dy}px) translateZ(0)`;
-        wrapper.style.opacity = String(t);
+        inner.style.opacity = String(t);
+        inner.style.transform = `translateY(${dy}px)`;
         break;
       }
       case 'slide-left': {
         const dx = (1 - t) * 60;
-        wrapper.style.transform = `translateX(${dx}px) translateZ(0)`;
-        wrapper.style.opacity = String(t);
+        inner.style.opacity = String(t);
+        inner.style.transform = `translateX(${dx}px)`;
         break;
       }
       case 'zoom-in': {
         const scale = 0.6 + t * 0.4;
-        wrapper.style.transform = `scale(${scale}) translateZ(0)`;
-        wrapper.style.opacity = String(t);
+        inner.style.opacity = String(t);
+        inner.style.transform = `scale(${scale})`;
         break;
       }
     }
@@ -497,8 +552,12 @@ export class MediaEngine {
           }
         }
       } else {
+        // Paused — only seek if not already seeking and meaningfully off.
+        // Guard with !el.seeking to prevent seek storms that drop readyState.
         if (!el.paused) el.pause();
-        if (Math.abs(el.currentTime - safeTime) > 0.05) el.currentTime = safeTime;
+        if (!el.seeking && Math.abs(el.currentTime - safeTime) > 0.08) {
+          el.currentTime = safeTime;
+        }
       }
     } else if (isPreWarming) {
       // ── Aggressive pre-warming ────────────────────────────────────────────
