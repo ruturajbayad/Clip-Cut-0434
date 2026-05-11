@@ -49,18 +49,29 @@ export default function PreviewCanvas() {
   const setIsPlaying    = useEditorStore((s) => s.setIsPlaying);
   const project         = useEditorStore((s) => s.project);
   const mediaLibrary    = useEditorStore((s) => s.mediaLibrary);
-  const selectedClipId  = useEditorStore((s) => s.selectedClipId);
-  const setSelectedClip = useEditorStore((s) => s.setSelectedClip);
+  const selectedClipId        = useEditorStore((s) => s.selectedClipId);
+  const setSelectedClip       = useEditorStore((s) => s.setSelectedClip);
+  const setCanvasAspectRatio  = useEditorStore((s) => s.setCanvasAspectRatio);
 
   // ── MediaEngine ──────────────────────────────────────────────────────────────
   const engineRef = useMediaEngine();
 
   // ── Canvas sizing ────────────────────────────────────────────────────────────
-  const [aspectRatio, setAspectRatio] = useState(ASPECT_RATIOS[0]);
+  const [aspectRatio, setAspectRatioLocal] = useState<typeof ASPECT_RATIOS[number]>(ASPECT_RATIOS[0]!);
+  const setAspectRatio = (ar: typeof ASPECT_RATIOS[number]) => {
+    setAspectRatioLocal(ar);
+    setCanvasAspectRatio({ w: ar.w, h: ar.h });
+  };
   const [showGrid, setShowGrid] = useState(false);
   const [showSafeZones, setShowSafeZones] = useState(false);
   const [canvasSize, setCanvasSize] = useState({ w: 640, h: 360 });
   const containerRef = useRef<HTMLDivElement>(null);
+
+  // canvasSizeRef — passed to VideoLayer/OverlayLayer so they can read canvas
+  // dimensions imperatively WITHOUT receiving them as props (which would cause
+  // VideoItem re-renders → ref callbacks fire → MediaEngine loses video els).
+  const canvasSizeRef = useRef({ w: 640, h: 360 });
+  const reapplyPositionsRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
     const update = () => {
@@ -70,7 +81,12 @@ export default function PreviewCanvas() {
       const ratio = aspectRatio.h / aspectRatio.w;
       let w = maxW, h = w * ratio;
       if (h > maxH) { h = maxH; w = h / ratio; }
-      setCanvasSize({ w: Math.floor(w), h: Math.floor(h) });
+      const newW = Math.floor(w);
+      const newH = Math.floor(h);
+      canvasSizeRef.current = { w: newW, h: newH };
+      setCanvasSize({ w: newW, h: newH });
+      // Re-apply all video wrapper positions after canvas resize
+      reapplyPositionsRef.current?.();
     };
     update();
     const obs = new ResizeObserver(update);
@@ -207,6 +223,8 @@ export default function PreviewCanvas() {
               onVideoRef={onVideoRef}
               onWrapperRef={onWrapperRef}
               mainTrackId={mainVideoTrack?.id}
+              canvasSizeRef={canvasSizeRef}
+              reapplyPositionsRef={reapplyPositionsRef}
             />
 
             {/*
@@ -285,7 +303,7 @@ export default function PreviewCanvas() {
               onClick={() => setAspectRatio(ar)}
               className={`text-[10px] font-medium px-2 py-1 rounded transition-colors ${
                 aspectRatio.label === ar.label
-                  ? 'bg-indigo-100 text-indigo-700'
+                  ? 'bg-blue-100 text-blue-700'
                   : 'text-gray-500 hover:bg-gray-100'
               }`}
             >
@@ -296,14 +314,14 @@ export default function PreviewCanvas() {
         <div className="flex items-center gap-1.5">
           <button
             onClick={() => setShowGrid(!showGrid)}
-            className={`p-1.5 rounded transition-colors ${showGrid ? 'text-indigo-600 bg-indigo-50' : 'text-gray-400 hover:bg-gray-100'}`}
+            className={`p-1.5 rounded transition-colors ${showGrid ? 'text-blue-600 bg-blue-50' : 'text-gray-400 hover:bg-gray-100'}`}
             title="Grid"
           >
             <Grid3X3 size={13} />
           </button>
           <button
             onClick={() => setShowSafeZones(!showSafeZones)}
-            className={`p-1.5 rounded transition-colors ${showSafeZones ? 'text-indigo-600 bg-indigo-50' : 'text-gray-400 hover:bg-gray-100'}`}
+            className={`p-1.5 rounded transition-colors ${showSafeZones ? 'text-blue-600 bg-blue-50' : 'text-gray-400 hover:bg-gray-100'}`}
             title="Safe Zones"
           >
             <AlignCenter size={13} />

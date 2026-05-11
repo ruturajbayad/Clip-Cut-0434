@@ -90,7 +90,7 @@ export default function TransitionPicker() {
       >
         <div className="p-3 border-b border-gray-100 flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <ArrowLeftRight size={13} className="text-indigo-500" />
+            <ArrowLeftRight size={13} className="text-blue-500" />
             <span className="text-[12px] font-semibold text-gray-800">Transitions</span>
           </div>
           <button
@@ -108,7 +108,7 @@ export default function TransitionPicker() {
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder="Search transitions..."
-              className="w-full text-xs pl-7 pr-3 py-1.5 bg-gray-50 border border-gray-200 rounded-lg outline-none focus:border-indigo-400"
+              className="w-full text-xs pl-7 pr-3 py-1.5 bg-gray-50 border border-gray-200 rounded-lg outline-none focus:border-blue-400"
             />
           </div>
         </div>
@@ -123,9 +123,9 @@ export default function TransitionPicker() {
               onHoverEnd={() => setHoveredId(null)}
               className={`rounded-lg overflow-hidden border-2 transition-all ${
                 selected === tr.id
-                  ? 'border-indigo-500 shadow-md shadow-indigo-100'
+                  ? 'border-blue-500 shadow-md shadow-blue-100'
                   : hoveredId === tr.id
-                  ? 'border-indigo-300'
+                  ? 'border-blue-300'
                   : 'border-transparent'
               }`}
             >

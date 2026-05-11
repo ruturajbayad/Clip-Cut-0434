@@ -152,7 +152,10 @@ export default function TransportBar() {
         <motion.button
           whileTap={{ scale: 0.93 }}
           onClick={() => setIsPlaying(!isPlaying)}
-          className="w-8 h-8 bg-indigo-600 hover:bg-indigo-700 rounded-lg flex items-center justify-center text-white transition-colors shadow-sm"
+          className="w-8 h-8 rounded-lg flex items-center justify-center text-white transition-colors shadow-sm"
+          style={{ background: '#0f172a' }}
+          onMouseEnter={(e) => ((e.currentTarget as HTMLElement).style.background = '#1e293b')}
+          onMouseLeave={(e) => ((e.currentTarget as HTMLElement).style.background = '#0f172a')}
           title="Play / Pause (Space)"
         >
           {isPlaying ? <Pause size={13} /> : <Play size={13} className="ml-0.5" />}
@@ -179,7 +182,7 @@ export default function TransportBar() {
         <button
           onClick={() => videoInputRef.current?.click()}
           title="Import video / image"
-          className="flex items-center gap-1 px-2 py-1 rounded text-[10px] text-gray-600 hover:bg-indigo-50 hover:text-indigo-600 transition-colors border border-gray-200 hover:border-indigo-300"
+          className="flex items-center gap-1 px-2 py-1 rounded text-[10px] text-gray-600 hover:bg-blue-50 hover:text-blue-600 transition-colors border border-gray-200 hover:border-blue-300"
         >
           <Plus size={8} className="text-gray-400" />
           <Video size={11} style={{ color: TRACK_COLORS.video }} />

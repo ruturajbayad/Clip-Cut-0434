@@ -28,7 +28,7 @@ export default function Navbar() {
       {/* Left: Logo + Project */}
       <div className="flex items-center gap-3">
         <div className="flex items-center gap-2">
-          <div className="w-7 h-7 bg-indigo-600 rounded-lg flex items-center justify-center">
+          <div className="w-7 h-7 rounded-lg flex items-center justify-center" style={{ background: '#0f172a' }}>
             <Film size={14} className="text-white" />
           </div>
           <span className="font-semibold text-gray-900 text-sm">CutCraft</span>
@@ -44,12 +44,12 @@ export default function Navbar() {
               if (e.key === 'Enter') { updateProject({ name: tempName }); setEditingName(false); }
               if (e.key === 'Escape') setEditingName(false);
             }}
-            className="text-sm font-medium text-gray-800 bg-indigo-50 border border-indigo-300 rounded px-2 py-0.5 outline-none"
+            className="text-sm font-medium text-gray-800 bg-blue-50 border border-blue-300 rounded px-2 py-0.5 outline-none"
           />
         ) : (
           <button
             onClick={() => { setTempName(project.name); setEditingName(true); }}
-            className="text-sm font-medium text-gray-800 hover:text-indigo-600 transition-colors px-1"
+            className="text-sm font-medium text-gray-800 hover:text-blue-600 transition-colors px-1"
           >
             {project.name}
           </button>
@@ -90,7 +90,10 @@ export default function Navbar() {
         <motion.button
           whileTap={{ scale: 0.96 }}
           onClick={() => setShowExportModal(true)}
-          className="flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-medium px-3 py-1.5 rounded-lg transition-colors shadow-sm"
+          className="flex items-center gap-1.5 text-white text-xs font-medium px-3 py-1.5 rounded-lg transition-colors shadow-sm"
+          style={{ background: '#1d4ed8' }}
+          onMouseEnter={(e) => ((e.currentTarget as HTMLElement).style.background = '#1e40af')}
+          onMouseLeave={(e) => ((e.currentTarget as HTMLElement).style.background = '#1d4ed8')}
         >
           <Download size={13} />
           Export

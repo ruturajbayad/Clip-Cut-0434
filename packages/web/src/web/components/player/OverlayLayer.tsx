@@ -34,6 +34,38 @@ function getTextAnimStyle(
   return { opacity };
 }
 
+// ── Entry transition style ────────────────────────────────────────────────────
+const ENTRY_DUR = 0.5; // seconds
+
+function getEntryTransitionStyle(clip: Clip, currentTime: number): React.CSSProperties {
+  const entry = clip.entryTransition ?? 'none';
+  if (entry === 'none') return {};
+
+  const elapsed = currentTime - clip.startTime;
+  if (elapsed >= ENTRY_DUR) return {};
+
+  const t = Math.max(0, Math.min(1, elapsed / ENTRY_DUR)); // 0→1 over ENTRY_DUR
+
+  switch (entry) {
+    case 'fade-in':
+      return { opacity: t };
+    case 'slide-up': {
+      const dy = (1 - t) * 40; // px offset
+      return { opacity: t, transform: `translateY(${dy}px)` };
+    }
+    case 'slide-left': {
+      const dx = (1 - t) * 60;
+      return { opacity: t, transform: `translateX(${dx}px)` };
+    }
+    case 'zoom-in': {
+      const scale = 0.6 + t * 0.4; // 0.6→1
+      return { opacity: t, transform: `scale(${scale})` };
+    }
+    default:
+      return {};
+  }
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 /** Does this clip have any keyframes for any of these properties? */
@@ -131,7 +163,7 @@ export function CanvasElement({
           <div
             className="absolute inset-0 pointer-events-none"
             style={{
-              boxShadow: '0 0 0 1.5px rgba(255,255,255,0.9), 0 0 0 3px #6366f1',
+              boxShadow: '0 0 0 1.5px rgba(255,255,255,0.9), 0 0 0 3px #3b82f6',
               borderRadius: 4,
               zIndex: 30,
             }}
@@ -147,7 +179,7 @@ export function CanvasElement({
                 width: isEdge ? 8 : 10,
                 height: isEdge ? 8 : 10,
                 background: 'white',
-                border: '2px solid #6366f1',
+                border: '2px solid #3b82f6',
                 borderRadius: isEdge ? 2 : 3,
                 transform: `translate(${dx === -1 ? '-50%' : dx === 1 ? '50%' : '-50%'}, ${dy === -1 ? '-50%' : dy === 1 ? '50%' : '-50%'})`,
                 pointerEvents: 'all',
@@ -201,7 +233,7 @@ export function CanvasElement({
               style={{
                 width: 20,
                 height: 20,
-                background: '#6366f1',
+                background: '#3b82f6',
                 borderRadius: '50%',
                 top: -32,
                 left: '50%',
@@ -211,7 +243,7 @@ export function CanvasElement({
                 alignItems: 'center',
                 justifyContent: 'center',
                 pointerEvents: 'all',
-                boxShadow: '0 2px 6px rgba(99,102,241,0.5)',
+                boxShadow: '0 2px 6px rgba(59,130,246,0.5)',
               }}
               onMouseDown={(e) => {
                 e.preventDefault();
@@ -249,7 +281,7 @@ export function CanvasElement({
               style={{
                 width: 1,
                 height: 24,
-                background: '#6366f1',
+                background: '#3b82f6',
                 top: -24,
                 left: '50%',
                 transform: 'translateX(-50%)',
@@ -259,7 +291,7 @@ export function CanvasElement({
           )}
 
           {/* Clip name label */}
-          <div className="absolute -top-6 left-0 text-[9px] bg-indigo-600 text-white px-1.5 py-0.5 rounded whitespace-nowrap pointer-events-none z-30 font-medium">
+          <div className="absolute -top-6 left-0 text-[9px] bg-blue-600 text-white px-1.5 py-0.5 rounded whitespace-nowrap pointer-events-none z-30 font-medium">
             {clip.name}
           </div>
         </>
@@ -297,12 +329,11 @@ export const OverlayLayer = memo(function OverlayLayer({
 
   return (
     <>
-      {/* Video hit areas (overlay clips are moveable) */}
+      {/* Video hit areas — ALL video clips are moveable/resizable (including main track) */}
       {activeVideoClips.map((clip) => {
         const interp = interpolateClip(clip, currentTime);
         const liveClip = Object.keys(interp).length > 0 ? { ...clip, ...interp } : clip;
         const isSelected = selectedClipId === clip.id;
-        const isOverlay = overlayIds.has(clip.id);
 
         return (
           <CanvasElement
@@ -312,9 +343,10 @@ export const OverlayLayer = memo(function OverlayLayer({
             canvasW={canvasW}
             canvasH={canvasH}
             onSelect={() => onSelect(clip.id)}
-            isOverlay={isOverlay}
+            isOverlay={true}
             currentTime={currentTime}
           >
+            {/* Transparent hit area — actual video is in VideoLayer below */}
             <div className="w-full h-full" style={{ background: 'transparent' }} />
           </CanvasElement>
         );
@@ -326,6 +358,7 @@ export const OverlayLayer = memo(function OverlayLayer({
         const liveClip = Object.keys(interp).length > 0 ? { ...clip, ...interp } : clip;
         const mediaSrc = clip.src ||
           (clip.mediaId ? mediaLibrary.find((m) => m.id === clip.mediaId)?.src : undefined);
+        const entryStyle = getEntryTransitionStyle(liveClip, currentTime);
 
         return (
           <CanvasElement
@@ -344,11 +377,13 @@ export const OverlayLayer = memo(function OverlayLayer({
                 alt={clip.name}
                 className="w-full h-full"
                 style={{
+                  ...entryStyle,
                   objectFit: 'contain',
-                  opacity: liveClip.opacity ?? 1,
+                  opacity: entryStyle.opacity !== undefined ? entryStyle.opacity : (liveClip.opacity ?? 1),
                   pointerEvents: 'none',
                   userSelect: 'none',
                   display: 'block',
+                  mixBlendMode: (liveClip.blendMode as React.CSSProperties['mixBlendMode']) || 'normal',
                   filter: (() => {
                     const EFFECT_FILTERS: Record<string, string> = {
                       blur: 'blur(4px)',
@@ -389,6 +424,25 @@ export const OverlayLayer = memo(function OverlayLayer({
         const liveClip = Object.keys(interp).length > 0 ? { ...clip, ...interp } : clip;
         const fontSize = Math.max(10, (liveClip.fontSize || 72) * canvasW / 1920);
         const animStyle = getTextAnimStyle(liveClip, currentTime);
+        const entryStyle = getEntryTransitionStyle(liveClip, currentTime);
+        // Merge: entry transition overrides fade-in from animStyle if set
+        const mergedStyle = Object.keys(entryStyle).length > 0 ? { ...animStyle, ...entryStyle } : animStyle;
+
+        // Build text-shadow from preset key or raw CSS
+        const textShadow = (() => {
+          const ts = liveClip.textShadow;
+          if (!ts || ts === 'none') return undefined;
+          if (ts === 'soft')   return '0 2px 8px rgba(0,0,0,0.6)';
+          if (ts === 'hard')   return '2px 2px 0px rgba(0,0,0,0.9)';
+          if (ts === 'glow')   return `0 0 12px ${liveClip.color || '#fff'}, 0 0 24px ${liveClip.color || '#fff'}`;
+          if (ts === 'neon')   return `0 0 6px #fff, 0 0 12px ${liveClip.color || '#fff'}, 0 0 30px ${liveClip.color || '#fff'}`;
+          return ts; // raw CSS
+        })();
+
+        // Build WebKit text stroke for outline
+        const webkitTextStroke = liveClip.textOutline && liveClip.textOutlineWidth
+          ? `${liveClip.textOutlineWidth}px ${liveClip.textOutline}`
+          : undefined;
 
         return (
           <CanvasElement
@@ -402,24 +456,40 @@ export const OverlayLayer = memo(function OverlayLayer({
             currentTime={currentTime}
           >
             <div
-              className="w-full h-full flex items-center justify-center"
+              className="w-full h-full flex items-center"
               style={{
-                ...animStyle,
-                fontFamily: liveClip.fontFamily || 'Inter',
-                fontSize,
-                color: liveClip.color || '#FFFFFF',
-                fontWeight: 700,
-                textShadow: '0 2px 8px rgba(0,0,0,0.6)',
-                pointerEvents: 'none',
-                userSelect: 'none',
-                transition: 'opacity 0.1s',
-                whiteSpace: 'pre-wrap',
-                wordBreak: 'break-word',
-                textAlign: 'center',
+                ...mergedStyle,
+                justifyContent:
+                  liveClip.textAlign === 'left' ? 'flex-start' :
+                  liveClip.textAlign === 'right' ? 'flex-end' : 'center',
+                backgroundColor: liveClip.textBackground || 'transparent',
+                borderRadius: liveClip.textBackground ? 4 : 0,
                 padding: '4px 8px',
               }}
             >
-              {liveClip.text || 'Text'}
+              <span
+                style={{
+                  fontFamily: liveClip.fontFamily || 'Inter',
+                  fontSize,
+                  color: liveClip.color || '#FFFFFF',
+                  fontWeight: liveClip.fontWeight || 'bold',
+                  fontStyle: liveClip.fontStyle || 'normal',
+                  letterSpacing: liveClip.letterSpacing ? `${liveClip.letterSpacing * canvasW / 1920}px` : undefined,
+                  lineHeight: liveClip.lineHeight || 1.2,
+                  textShadow,
+                  WebkitTextStroke: webkitTextStroke,
+                  textTransform: liveClip.textUppercase ? 'uppercase' : 'none',
+                  textAlign: liveClip.textAlign || 'center',
+                  pointerEvents: 'none',
+                  userSelect: 'none',
+                  whiteSpace: 'pre-wrap',
+                  wordBreak: 'break-word',
+                  display: 'block',
+                  width: '100%',
+                }}
+              >
+                {liveClip.text || 'Text'}
+              </span>
             </div>
           </CanvasElement>
         );

@@ -21,18 +21,47 @@ const TABS: { id: ActivePanel; icon: React.ComponentType<{ size?: number; classN
 ];
 
 const TEXT_PRESETS = [
-  { id: 'cinematic', label: 'Cinematic Title', previewStyle: 'text-lg font-bold tracking-widest uppercase', previewColor: 'text-gray-900',
-    fontSize: 96, fontFamily: 'Inter', color: '#FFFFFF', text: 'CINEMATIC TITLE' },
-  { id: 'vlog', label: 'Vlog Style', previewStyle: 'text-xl font-bold italic', previewColor: 'text-indigo-600',
-    fontSize: 72, fontFamily: 'Inter', color: '#818CF8', text: 'Vlog Title' },
-  { id: 'gaming', label: 'Gaming', previewStyle: 'text-xl font-black uppercase', previewColor: 'text-yellow-500',
-    fontSize: 80, fontFamily: 'Space Grotesk', color: '#FBBF24', text: 'GAME ON' },
-  { id: 'minimal', label: 'Minimal', previewStyle: 'text-sm font-light tracking-widest', previewColor: 'text-gray-600',
-    fontSize: 36, fontFamily: 'Raleway', color: '#CCCCCC', text: 'minimal text' },
-  { id: 'neon', label: 'Neon Glow', previewStyle: 'text-xl font-bold', previewColor: 'text-purple-500',
-    fontSize: 72, fontFamily: 'Space Grotesk', color: '#C084FC', text: 'NEON GLOW' },
-  { id: 'subtitle', label: 'Subtitle', previewStyle: 'text-sm font-medium', previewColor: 'text-gray-800',
-    fontSize: 40, fontFamily: 'Inter', color: '#FFFFFF', text: 'Subtitle text here' },
+  {
+    id: 'cinematic', label: 'Cinematic Title',
+    previewStyle: 'text-lg font-bold tracking-widest uppercase', previewColor: 'text-gray-900',
+    fontSize: 96, fontFamily: 'Inter', color: '#FFFFFF', text: 'CINEMATIC TITLE',
+    fontWeight: 'bold' as const, fontStyle: 'normal' as const, textUppercase: true,
+    letterSpacing: 8, textShadow: 'hard', textOutline: '#000000', textOutlineWidth: 2,
+  },
+  {
+    id: 'vlog', label: 'Vlog Style',
+    previewStyle: 'text-xl font-bold italic', previewColor: 'text-blue-600',
+    fontSize: 72, fontFamily: 'Inter', color: '#818CF8', text: 'Vlog Title',
+    fontWeight: 'bold' as const, fontStyle: 'italic' as const, textShadow: 'soft',
+  },
+  {
+    id: 'gaming', label: 'Gaming',
+    previewStyle: 'text-xl font-black uppercase', previewColor: 'text-yellow-500',
+    fontSize: 80, fontFamily: 'Space Grotesk', color: '#FBBF24', text: 'GAME ON',
+    fontWeight: '900' as const, fontStyle: 'normal' as const, textUppercase: true,
+    letterSpacing: 4, textShadow: 'hard', textOutline: '#000000', textOutlineWidth: 3,
+  },
+  {
+    id: 'minimal', label: 'Minimal',
+    previewStyle: 'text-sm font-light tracking-widest', previewColor: 'text-gray-600',
+    fontSize: 36, fontFamily: 'Raleway', color: '#CCCCCC', text: 'minimal text',
+    fontWeight: '300' as const, fontStyle: 'normal' as const, letterSpacing: 6,
+    textShadow: 'none',
+  },
+  {
+    id: 'neon', label: 'Neon Glow',
+    previewStyle: 'text-xl font-bold', previewColor: 'text-purple-500',
+    fontSize: 72, fontFamily: 'Space Grotesk', color: '#C084FC', text: 'NEON GLOW',
+    fontWeight: 'bold' as const, fontStyle: 'normal' as const, textUppercase: true,
+    letterSpacing: 4, textShadow: 'neon',
+  },
+  {
+    id: 'subtitle', label: 'Subtitle',
+    previewStyle: 'text-sm font-medium', previewColor: 'text-gray-800',
+    fontSize: 40, fontFamily: 'Inter', color: '#FFFFFF', text: 'Subtitle text here',
+    fontWeight: '500' as const, fontStyle: 'normal' as const, textShadow: 'soft',
+    textBackground: 'rgba(0,0,0,0.5)',
+  },
 ];
 
 const EFFECT_ITEMS = [
@@ -130,7 +159,7 @@ function MediaCard({ item, onAdd, onAddOverlay }: { item: MediaItem; onAdd: () =
     <motion.div
       whileHover={{ scale: 1.02 }}
       whileTap={{ scale: 0.97 }}
-      className="group relative rounded-lg overflow-hidden cursor-pointer border border-gray-100 hover:border-indigo-300 hover:shadow-md transition-all bg-white"
+      className="group relative rounded-lg overflow-hidden cursor-pointer border border-gray-100 hover:border-blue-300 hover:shadow-md transition-all bg-white"
     >
       {/* Thumbnail */}
       <div className="aspect-video relative overflow-hidden bg-gray-100">
@@ -156,10 +185,10 @@ function MediaCard({ item, onAdd, onAddOverlay }: { item: MediaItem; onAdd: () =
         <div className="text-[9px] text-gray-400 capitalize">{item.type}</div>
       </div>
       {/* Add overlay — appears on hover */}
-      <div className="absolute inset-0 bg-indigo-600/0 group-hover:bg-indigo-600/5 transition-all flex items-end justify-center opacity-0 group-hover:opacity-100 pb-2 gap-1.5">
+      <div className="absolute inset-0 bg-blue-600/0 group-hover:bg-blue-600/5 transition-all flex items-end justify-center opacity-0 group-hover:opacity-100 pb-2 gap-1.5">
         <button
           onClick={(e) => { e.stopPropagation(); onAdd(); }}
-          className="flex items-center gap-1 px-2 py-1 bg-indigo-600 rounded-full shadow-lg hover:bg-indigo-700 transition-colors text-white text-[9px] font-medium"
+          className="flex items-center gap-1 px-2 py-1 bg-blue-600 rounded-full shadow-lg hover:bg-blue-700 transition-colors text-white text-[9px] font-medium"
           title="Add to main track"
         >
           <Plus size={10} /> Main
@@ -311,15 +340,24 @@ export default function LeftSidebar() {
     if (textTrack) {
       const endTime = textTrack.clips.reduce((m, c) => Math.max(m, c.startTime + c.duration), 0);
       addClip(textTrack.id, {
-        name: preset ? preset.label : 'New Text',
-        type: 'text',
-        startTime: endTime,
-        duration: 4,
+        name:         preset ? preset.label : 'New Text',
+        type:         'text',
+        startTime:    endTime,
+        duration:     4,
         thumbnailColor: '#FBBF24',
-        text: preset ? preset.text : 'Your Text Here',
-        fontSize: preset ? preset.fontSize : 72,
-        fontFamily: preset ? preset.fontFamily : 'Inter',
-        color: preset ? preset.color : '#FFFFFF',
+        text:         preset ? preset.text      : 'Your Text Here',
+        fontSize:     preset ? preset.fontSize  : 72,
+        fontFamily:   preset ? preset.fontFamily : 'Inter',
+        color:        preset ? preset.color     : '#FFFFFF',
+        // New style fields from preset
+        fontWeight:       preset?.fontWeight,
+        fontStyle:        preset?.fontStyle,
+        textUppercase:    preset?.textUppercase,
+        letterSpacing:    preset?.letterSpacing,
+        textShadow:       preset?.textShadow ?? 'soft',
+        textOutline:      preset?.textOutline,
+        textOutlineWidth: preset?.textOutlineWidth,
+        textBackground:   preset?.textBackground,
       });
     }
   };
@@ -337,12 +375,12 @@ export default function LeftSidebar() {
               onClick={() => setActivePanel(tab.id)}
               whileTap={{ scale: 0.9 }}
               className={`w-11 h-11 flex flex-col items-center justify-center rounded-xl transition-all gap-0.5 relative ${
-                active ? 'bg-indigo-50 text-indigo-600' : 'text-gray-400 hover:text-gray-700 hover:bg-gray-50'
+                active ? 'bg-blue-50 text-blue-600' : 'text-gray-400 hover:text-gray-700 hover:bg-gray-50'
               }`}
               title={tab.label}
             >
               {active && (
-                <motion.div layoutId="sidebar-active" className="absolute inset-0 bg-indigo-50 rounded-xl" />
+                <motion.div layoutId="sidebar-active" className="absolute inset-0 bg-blue-50 rounded-xl" />
               )}
               <Icon size={15} className="relative z-10" />
               <span className="text-[8px] font-medium relative z-10 leading-none">{tab.label}</span>
@@ -369,7 +407,7 @@ export default function LeftSidebar() {
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 placeholder={`Search ${activePanel}...`}
-                className="w-full text-xs pl-7 pr-3 py-1.5 bg-gray-50 border border-gray-200 rounded-lg outline-none focus:border-indigo-400 focus:bg-white transition-colors"
+                className="w-full text-xs pl-7 pr-3 py-1.5 bg-gray-50 border border-gray-200 rounded-lg outline-none focus:border-blue-400 focus:bg-white transition-colors"
               />
               {search && (
                 <button onClick={() => setSearch('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600">
@@ -398,17 +436,17 @@ export default function LeftSidebar() {
                   const canUp = trackIdx < project.tracks.length - 1;
                   const canDown = trackIdx > 0;
                   return (
-                    <div className="bg-indigo-50 border border-indigo-200 rounded-xl p-2.5">
+                    <div className="bg-blue-50 border border-blue-200 rounded-xl p-2.5">
                       <div className="flex items-center gap-1.5 mb-2">
-                        <Layers size={12} className="text-indigo-500" />
-                        <span className="text-[10px] font-semibold text-indigo-700">Layer Order</span>
-                        <span className="text-[9px] text-indigo-400 ml-auto">Layer {trackIdx + 1} of {project.tracks.length}</span>
+                        <Layers size={12} className="text-blue-500" />
+                        <span className="text-[10px] font-semibold text-blue-700">Layer Order</span>
+                        <span className="text-[9px] text-blue-400 ml-auto">Layer {trackIdx + 1} of {project.tracks.length}</span>
                       </div>
                       <div className="flex gap-1.5">
                         <button
                           onClick={() => reorderTrack(track.id, 'up')}
                           disabled={!canUp}
-                          className="flex-1 flex items-center justify-center gap-1 py-1 rounded-lg text-[10px] font-medium transition-all disabled:opacity-30 disabled:cursor-not-allowed bg-white border border-indigo-200 hover:bg-indigo-100 text-indigo-700"
+                          className="flex-1 flex items-center justify-center gap-1 py-1 rounded-lg text-[10px] font-medium transition-all disabled:opacity-30 disabled:cursor-not-allowed bg-white border border-blue-200 hover:bg-blue-100 text-blue-700"
                           title="Move layer up (closer to front)"
                         >
                           <ChevronUp size={12} /> Front
@@ -416,7 +454,7 @@ export default function LeftSidebar() {
                         <button
                           onClick={() => reorderTrack(track.id, 'down')}
                           disabled={!canDown}
-                          className="flex-1 flex items-center justify-center gap-1 py-1 rounded-lg text-[10px] font-medium transition-all disabled:opacity-30 disabled:cursor-not-allowed bg-white border border-indigo-200 hover:bg-indigo-100 text-indigo-700"
+                          className="flex-1 flex items-center justify-center gap-1 py-1 rounded-lg text-[10px] font-medium transition-all disabled:opacity-30 disabled:cursor-not-allowed bg-white border border-blue-200 hover:bg-blue-100 text-blue-700"
                           title="Move layer down (closer to back)"
                         >
                           <ChevronDown size={12} /> Back
@@ -432,12 +470,12 @@ export default function LeftSidebar() {
                   onDragLeave={() => setDragOver(false)}
                   onDrop={handleDrop}
                   className={`border-2 border-dashed rounded-xl py-5 flex flex-col items-center gap-2 transition-all cursor-pointer ${
-                    dragOver ? 'border-indigo-500 bg-indigo-50 text-indigo-500' : 'border-gray-200 text-gray-400 hover:border-indigo-400 hover:text-indigo-500 hover:bg-indigo-50/40'
+                    dragOver ? 'border-blue-500 bg-blue-50 text-blue-500' : 'border-gray-200 text-gray-400 hover:border-blue-400 hover:text-blue-500 hover:bg-blue-50/40'
                   }`}
                   onClick={() => fileInputRef.current?.click()}
                 >
                   {uploading ? (
-                    <><Loader2 size={20} className="animate-spin text-indigo-500" /><span className="text-xs font-medium">Processing...</span></>
+                    <><Loader2 size={20} className="animate-spin text-blue-500" /><span className="text-xs font-medium">Processing...</span></>
                   ) : (
                     <><Upload size={18} /><span className="text-xs font-medium">Upload Video or Image</span><span className="text-[10px] opacity-70">MP4, MOV, WebM, JPG, PNG</span></>
                   )}
@@ -509,7 +547,7 @@ export default function LeftSidebar() {
               <div className="space-y-2">
                 <button
                   onClick={handleAddText}
-                  className="w-full flex items-center justify-center gap-2 border-2 border-dashed border-gray-200 hover:border-indigo-400 rounded-xl py-3 text-gray-400 hover:text-indigo-500 text-xs font-medium transition-all"
+                  className="w-full flex items-center justify-center gap-2 border-2 border-dashed border-gray-200 hover:border-blue-400 rounded-xl py-3 text-gray-400 hover:text-blue-500 text-xs font-medium transition-all"
                 >
                   <Plus size={14} /> Add Text Clip
                 </button>
@@ -520,10 +558,44 @@ export default function LeftSidebar() {
                     whileHover={{ scale: 1.01 }}
                     whileTap={{ scale: 0.98 }}
                     onClick={() => handleAddText(preset)}
-                    className="border border-gray-100 hover:border-indigo-200 hover:bg-indigo-50/50 rounded-xl p-3 cursor-pointer transition-all"
+                    className="border border-gray-100 hover:border-blue-200 rounded-xl p-3 cursor-pointer transition-all overflow-hidden"
+                    style={{
+                      background: preset.textBackground
+                        ? preset.textBackground
+                        : 'linear-gradient(135deg, #f8f9fa 0%, #f1f3f5 100%)',
+                    }}
                   >
-                    <div className={`${preset.previewStyle} ${preset.previewColor} leading-tight`}>{preset.label}</div>
-                    <div className="text-[9px] text-gray-400 mt-0.5">{preset.fontFamily} · {preset.fontSize}px</div>
+                    <div
+                      style={{
+                        fontFamily:    preset.fontFamily + ', sans-serif',
+                        fontSize:      Math.max(11, preset.fontSize * 0.18),
+                        color:         preset.color,
+                        fontWeight:    preset.fontWeight || 'bold',
+                        fontStyle:     preset.fontStyle  || 'normal',
+                        letterSpacing: preset.letterSpacing ? `${preset.letterSpacing * 0.18}px` : undefined,
+                        textTransform: preset.textUppercase ? 'uppercase' : 'none',
+                        textShadow:    (() => {
+                          const ts = preset.textShadow;
+                          if (!ts || ts === 'none') return undefined;
+                          if (ts === 'soft')  return '0 1px 4px rgba(0,0,0,0.6)';
+                          if (ts === 'hard')  return '1px 1px 0 rgba(0,0,0,0.9)';
+                          if (ts === 'glow')  return `0 0 6px ${preset.color}`;
+                          if (ts === 'neon')  return `0 0 4px #fff, 0 0 8px ${preset.color}`;
+                          return ts;
+                        })(),
+                        WebkitTextStroke: preset.textOutline && preset.textOutlineWidth
+                          ? `${preset.textOutlineWidth * 0.18}px ${preset.textOutline}` : undefined,
+                        lineHeight: 1.2,
+                        whiteSpace: 'nowrap',
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                      }}
+                    >
+                      {preset.textUppercase ? preset.label.toUpperCase() : preset.label}
+                    </div>
+                    <div className="text-[9px] text-gray-400 mt-0.5 opacity-60">
+                      {preset.fontFamily} · {preset.fontSize}px
+                    </div>
                   </motion.div>
                 ))}
               </div>
@@ -533,7 +605,7 @@ export default function LeftSidebar() {
             {activePanel === 'audio' && (
               <div className="space-y-3">
                 <div
-                  className="border-2 border-dashed border-gray-200 hover:border-indigo-400 rounded-xl py-4 flex flex-col items-center gap-2 text-gray-400 hover:text-indigo-500 transition-all cursor-pointer"
+                  className="border-2 border-dashed border-gray-200 hover:border-blue-400 rounded-xl py-4 flex flex-col items-center gap-2 text-gray-400 hover:text-blue-500 transition-all cursor-pointer"
                   onClick={() => {
                     const input = document.createElement('input');
                     input.type = 'file';
@@ -554,7 +626,7 @@ export default function LeftSidebar() {
                   <>
                     <div className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide">Your Audio</div>
                     {mediaLibrary.filter(m => m.type === 'audio' && m.name.toLowerCase().includes(search.toLowerCase())).map((item) => (
-                      <div key={item.id} className="flex items-center gap-2 p-2 border border-gray-100 hover:border-indigo-200 rounded-xl cursor-pointer hover:bg-indigo-50/50 transition-all">
+                      <div key={item.id} className="flex items-center gap-2 p-2 border border-gray-100 hover:border-blue-200 rounded-xl cursor-pointer hover:bg-blue-50/50 transition-all">
                         <div className="w-8 h-8 bg-emerald-100 rounded-lg flex items-center justify-center shrink-0">
                           <Music size={14} className="text-emerald-600" />
                         </div>
@@ -564,7 +636,7 @@ export default function LeftSidebar() {
                         </div>
                         <button
                           onClick={() => addClipFromMedia(item)}
-                          className="w-6 h-6 rounded-full bg-indigo-100 hover:bg-indigo-600 text-indigo-600 hover:text-white flex items-center justify-center transition-all shrink-0"
+                          className="w-6 h-6 rounded-full bg-blue-100 hover:bg-blue-600 text-blue-600 hover:text-white flex items-center justify-center transition-all shrink-0"
                         >
                           <Plus size={12} />
                         </button>
@@ -605,13 +677,13 @@ export default function LeftSidebar() {
                           }
                         }}
                         className={`rounded-xl overflow-hidden border hover:shadow-md cursor-pointer transition-all ${
-                          isActive ? 'border-indigo-500 ring-2 ring-indigo-400' : 'border-gray-100 hover:border-indigo-300'
+                          isActive ? 'border-blue-500 ring-2 ring-blue-400' : 'border-gray-100 hover:border-blue-300'
                         }`}
                       >
                         <div className="h-14 flex items-center justify-center relative" style={{ backgroundColor: effect.color }}>
                           <Sparkles size={18} className="text-gray-600 opacity-60" />
                           {isActive && (
-                            <div className="absolute top-1 right-1 w-3 h-3 bg-indigo-500 rounded-full" />
+                            <div className="absolute top-1 right-1 w-3 h-3 bg-blue-500 rounded-full" />
                           )}
                         </div>
                         <div className="p-1.5 bg-white">
@@ -632,10 +704,10 @@ export default function LeftSidebar() {
                     key={tr.id}
                     whileHover={{ scale: 1.04 }}
                     whileTap={{ scale: 0.96 }}
-                    className="rounded-xl border border-gray-100 hover:border-indigo-300 hover:shadow-md cursor-grab overflow-hidden transition-all"
+                    className="rounded-xl border border-gray-100 hover:border-blue-300 hover:shadow-md cursor-grab overflow-hidden transition-all"
                   >
-                    <div className="h-12 bg-gradient-to-r from-indigo-100 to-purple-100 flex items-center justify-center">
-                      <ArrowLeftRight size={16} className="text-indigo-400" />
+                    <div className="h-12 bg-gradient-to-r from-blue-100 to-purple-100 flex items-center justify-center">
+                      <ArrowLeftRight size={16} className="text-blue-400" />
                     </div>
                     <div className="p-1.5 bg-white text-center">
                       <div className="text-[10px] font-medium text-gray-700">{tr.name}</div>
@@ -676,12 +748,12 @@ export default function LeftSidebar() {
                           }
                         }}
                         className={`rounded-xl border hover:shadow-md cursor-pointer overflow-hidden transition-all ${
-                          isActive ? 'border-indigo-500 ring-2 ring-indigo-400' : 'border-gray-100 hover:border-indigo-300'
+                          isActive ? 'border-blue-500 ring-2 ring-blue-400' : 'border-gray-100 hover:border-blue-300'
                         }`}
                       >
-                        <div className="h-14 bg-gradient-to-br from-purple-100 to-indigo-100 relative" style={{ filter: filter.css || 'none' }}>
+                        <div className="h-14 bg-gradient-to-br from-purple-100 to-blue-100 relative" style={{ filter: filter.css || 'none' }}>
                           {isActive && (
-                            <div className="absolute top-1 right-1 w-3 h-3 bg-indigo-500 rounded-full" />
+                            <div className="absolute top-1 right-1 w-3 h-3 bg-blue-500 rounded-full" />
                           )}
                         </div>
                         <div className="p-1.5 bg-white text-center">

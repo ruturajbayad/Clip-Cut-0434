@@ -49,9 +49,20 @@ export interface Clip {
   fontSize?: number;
   fontFamily?: string;
   color?: string;
+  fontWeight?: 'normal' | 'bold' | '100' | '200' | '300' | '400' | '500' | '600' | '700' | '800' | '900';
+  fontStyle?: 'normal' | 'italic';
+  textAlign?: 'left' | 'center' | 'right';
+  letterSpacing?: number;   // px
+  lineHeight?: number;      // multiplier e.g. 1.2
+  textShadow?: string;      // CSS text-shadow string or preset key
+  textBackground?: string;  // background color for text box (hex or rgba)
+  textOutline?: string;     // CSS stroke color e.g. '#000000'
+  textOutlineWidth?: number; // stroke width in px
+  textUppercase?: boolean;
   effect?: string;
   filterCss?: string; // raw CSS filter string from filter presets
   transition?: string;
+  entryTransition?: 'none' | 'fade-in' | 'slide-up' | 'slide-left' | 'zoom-in'; // entry animation
   trimStart?: number; // seconds offset into the source file (for split clips)
   speed?: number;          // playback rate multiplier (default 1)
   reverse?: boolean;       // play clip in reverse
@@ -165,6 +176,8 @@ interface EditorState {
   selectedTrackId: string | null;
   activePanel: ActivePanel;
   showExportModal: boolean;
+  /** Canvas aspect ratio — synced from PreviewCanvas so export uses correct dimensions */
+  canvasAspectRatio: { w: number; h: number };
   showTransitionPicker: boolean;
   transitionPickerPosition: { x: number; y: number } | null;
   transitionPickerClipId: string | null;
@@ -179,6 +192,7 @@ interface EditorState {
   setSelectedTrack: (id: string | null) => void;
   setActivePanel: (panel: ActivePanel) => void;
   setShowExportModal: (show: boolean) => void;
+  setCanvasAspectRatio: (ar: { w: number; h: number }) => void;
   setShowTransitionPicker: (show: boolean, position?: { x: number; y: number }, clipId?: string) => void;
   addMediaItem: (item: MediaItem) => void;
   addTrack: (type: TrackType) => void;
@@ -283,6 +297,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   selectedTrackId: null,
   activePanel: 'media',
   showExportModal: false,
+  canvasAspectRatio: { w: 16, h: 9 },
   showTransitionPicker: false,
   transitionPickerPosition: null,
   transitionPickerClipId: null,
@@ -296,6 +311,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   setSelectedTrack: (id) => set({ selectedTrackId: id }),
   setActivePanel: (panel) => set({ activePanel: panel }),
   setShowExportModal: (show) => set({ showExportModal: show }),
+  setCanvasAspectRatio: (ar) => set({ canvasAspectRatio: ar }),
   setShowTransitionPicker: (show, position, clipId) =>
     set({ showTransitionPicker: show, transitionPickerPosition: position || null, transitionPickerClipId: clipId || null }),
 
