@@ -386,16 +386,25 @@ export class MediaEngine {
       reveal();
     };
 
-    if (supportsRVFC(el)) {
-      // Best path: fire exactly when first frame is painted to screen
-      (el as rVFCVideo).requestVideoFrameCallback(revealOnce);
-    } else if (el.readyState >= 3) {
-      // Already has frames buffered — reveal now
+    if (el.readyState >= 1) {
+      // Has at least metadata (readyState 1) — enough to seek and show a frame.
+      // Reveal immediately; _syncVideoEl will seek to the right position.
       window.clearTimeout(timeoutId);
       reveal();
+    } else if (supportsRVFC(el) && this._playing) {
+      // rVFC only fires when a frame is actually painted — only reliable during playback.
+      // When paused, rVFC never fires because no new frames are rendered.
+      (el as rVFCVideo).requestVideoFrameCallback(revealOnce);
     } else {
-      // Fall back: reveal as soon as browser can play
+      // Paused or no rVFC — wait for canplay (fires as soon as first frame is decodable).
+      // This is the safe path for initial load at t=0 where video is paused.
       el.addEventListener('canplay', revealOnce, { once: true });
+      // Also register rVFC as a backup if playback starts before canplay fires
+      if (supportsRVFC(el)) {
+        (el as rVFCVideo).requestVideoFrameCallback(() => {
+          if (this._pendingReveal.has(clipId)) revealOnce();
+        });
+      }
     }
   }
 
@@ -552,10 +561,14 @@ export class MediaEngine {
           }
         }
       } else {
-        // Paused — only seek if not already seeking and meaningfully off.
-        // Guard with !el.seeking to prevent seek storms that drop readyState.
+        // Paused — ensure element is loading and seeked to the right position.
         if (!el.paused) el.pause();
-        if (!el.seeking && Math.abs(el.currentTime - safeTime) > 0.08) {
+        if (el.readyState < 1) {
+          // Element hasn't started loading at all — kick it.
+          // This triggers network fetch and will fire canplay, unblocking _gateReveal.
+          el.load();
+        } else if (!el.seeking && Math.abs(el.currentTime - safeTime) > 0.08) {
+          // Loaded but at wrong position — seek.
           el.currentTime = safeTime;
         }
       }
