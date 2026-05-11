@@ -182,7 +182,10 @@ export class MediaEngine {
     if (this._pendingSyncTimer) return; // already scheduled
     this._pendingSyncTimer = window.setTimeout(() => {
       this._pendingSyncTimer = 0;
-      if (!this._playing) this._syncFrame(this._time);
+      // preserveVisible=true: don't hide already-revealed wrappers during project edits
+      // (e.g. user dragging clip in timeline changes startTime → clip temporarily out of
+      //  active range → without this guard, wrapper would go black mid-drag)
+      if (!this._playing) this._syncFrame(this._time, true);
     }, 50); // 50ms: enough for all React useEffect/ref callbacks to settle
   }
 
@@ -248,7 +251,7 @@ export class MediaEngine {
 
   // ─── Core sync — called every RAF frame ──────────────────────────────────────
 
-  private _syncFrame(time: number) {
+  private _syncFrame(time: number, preserveVisible = false) {
     if (!this._project) return;
     const clips = this._project.tracks.flatMap((t) => t.clips);
 
@@ -284,6 +287,14 @@ export class MediaEngine {
             this._staleClips.delete(clip.id); // It became active again
           }
         } else {
+          // Clip is no longer active.
+          // preserveVisible: skip hiding already-revealed clips when called from
+          // _scheduleSync (triggered by setProject/updateClip while paused).
+          // This prevents the wrapper going black mid-drag when the user moves a
+          // clip in the timeline (startTime change temporarily puts currentTime
+          // outside the clip's active range).
+          if (preserveVisible && this._revealedClips.has(clip.id)) return;
+
           // Clip is no longer active
           if (this._pendingReveal.has(clip.id)) {
             // Was waiting to reveal but clip ended — cancel

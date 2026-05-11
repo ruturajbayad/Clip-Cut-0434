@@ -21,7 +21,7 @@
 
 import { memo, useEffect, useRef, useCallback } from 'react';
 import { Monitor } from 'lucide-react';
-import { useEditorStore, type Clip, type MediaItem } from '../../store/editorStore';
+import { useEditorStore, interpolateClip, type Clip, type MediaItem } from '../../store/editorStore';
 
 /** CSS filter strings for named effects */
 const EFFECT_FILTERS: Record<string, string> = {
@@ -121,7 +121,11 @@ const VideoItem = memo(function VideoItem({
       const updated = state.project.tracks.flatMap((t) => t.clips).find((c) => c.id === clip.id);
       if (updated) {
         applyToVideo(updated);
-        applyPosition(updated);
+        // Merge keyframe-interpolated values so position matches OverlayLayer's CanvasElement
+        const t = useEditorStore.getState().currentTime;
+        const interp = interpolateClip(updated, t);
+        const live = Object.keys(interp).length > 0 ? { ...updated, ...interp } : updated;
+        applyPosition(live);
       }
     });
     return unsub;
