@@ -579,6 +579,7 @@ export default function ExportModal() {
       // Monotonic frame counter is the ONLY source of time truth.
       // This prevents drift and works even when tab is hidden.
       let frameIndex = 0;
+      let tickBusy   = false; // re-entrancy guard
 
       await new Promise<void>((resolve) => {
         // ── KEY FIX: use setInterval not rAF ───────────────────────────────
@@ -591,7 +592,13 @@ export default function ExportModal() {
         // interval never accumulates debt.
         //
         intervalRef.current = setInterval(() => {
+          // If the previous tick's canvas draw is still running (slow GPU),
+          // skip this tick rather than piling up work on the main thread.
+          if (tickBusy) return;
+          tickBusy = true;
+
           if (cancelRef.current || frameIndex >= totalFrames) {
+            tickBusy = false;
             resolve();
             return;
           }
@@ -679,9 +686,16 @@ export default function ExportModal() {
           }
 
           frameIndex++;
-          setProgress(Math.min(99, (frameIndex / totalFrames) * 100));
-          setCurrentTime(t);
-          setStage(`Frame ${frameIndex} / ${totalFrames}`);
+          tickBusy = false;
+          // Throttle React re-renders — only update UI every 10 frames.
+          // Calling setState 30x/sec triggers 30 re-renders/sec on the main
+          // thread, which competes with canvas draw and freezes the browser.
+          // setCurrentTime also drives the player re-render — skip it entirely
+          // during export; we restore it to 0 when done.
+          if (frameIndex % 10 === 0 || frameIndex === totalFrames) {
+            setProgress(Math.min(99, (frameIndex / totalFrames) * 100));
+            setStage(`Frame ${frameIndex} / ${totalFrames}`);
+          }
         }, frameDuration * 1000);
       });
 
