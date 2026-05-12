@@ -35,7 +35,7 @@ const RESOLUTIONS = [
   { label: '1080p', h: 1080, desc: 'Full HD' },
 ] as const;
 
-const FPS_OPTIONS = [24, 30] as const;
+const FPS_OPTIONS = [24, 60] as const;
 
 // Auto bitrate by resolution (Mbps)
 const AUTO_BITRATE: Record<string, number> = {
@@ -338,7 +338,7 @@ export default function ExportModal() {
   })));
 
   const [resolution, setResolution] = useState<typeof RESOLUTIONS[number]>(RESOLUTIONS[2]!);
-  const [fps,        setFps]        = useState<typeof FPS_OPTIONS[number]>(30);
+  const [fps,        setFps]        = useState<typeof FPS_OPTIONS[number]>(60);
   const [status,     setStatus]     = useState<ExportStatus>('idle');
   const [progress,   setProgress]   = useState(0);
   const [stage,      setStage]      = useState('');
